@@ -228,21 +228,21 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 					if mod == n.Module {
 						continue // insiders see their module's private types
 					}
-					x.pass.Reportf(call.Pos(),
+					x.reportAt(call, n, fmt.Sprintf(
 						"error[DI0005]: %s is provided inside module %q but not exported — %s cannot see it; add di.Export[%s]() to that module",
-						shortType(n.Type), mod, n.By, shortType(n.Type))
+						shortType(n.Type), mod, n.By, shortType(n.Type)))
 					continue
 				}
 				if scoped[n.Type] {
-					x.pass.Reportf(call.Pos(),
+					x.reportAt(call, n, fmt.Sprintf(
 						"error[DI0101]: %s (singleton) depends on %s (scoped) — a singleton would capture one scope's instance forever; hold di.Scope[YourScope] and Enter per operation",
-						n.By, shortType(n.Type))
+						n.By, shortType(n.Type)))
 					continue
 				}
 				if member[n.Type] {
-					x.pass.Reportf(call.Pos(),
+					x.reportAt(call, n, fmt.Sprintf(
 						"error[DI0106]: %s consumes family member %s directly — members exist only between Spawn and Stop; take di.Family[S] and act per key",
-						n.By, shortType(n.Type))
+						n.By, shortType(n.Type)))
 					continue
 				}
 				x.reportMissing(call, n)
@@ -261,6 +261,19 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	x.checkCycles(call, &total)
 }
 
+// reportAt emits a graph error with the consumer's declaration as a
+// related span — the rustc-style "declared here" secondary.
+func (x *extractor) reportAt(call *ast.CallExpr, n need, msg string) {
+	d := analysis.Diagnostic{Pos: call.Pos(), Message: msg}
+	if decl := x.declByName(n.By); decl != nil {
+		d.Related = append(d.Related, analysis.RelatedInformation{
+			Pos:     decl.Name.Pos(),
+			Message: fmt.Sprintf("needed by %s, declared here", n.By),
+		})
+	}
+	x.pass.Report(d)
+}
+
 // reportMissing emits DI0001 — with a one-click fix when an unregistered
 // constructor for the missing type exists in this package.
 func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
@@ -269,6 +282,13 @@ func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
 		Message: fmt.Sprintf(
 			"error[DI0001]: no provider for %s (needed by %s) — add a di.Provide/Supply for it, or take di.Optional[%s]",
 			shortType(n.Type), n.By, shortType(n.Type)),
+	}
+	// Point at the consumer too — "needed by NewServer, declared here".
+	if decl := x.declByName(n.By); decl != nil {
+		d.Related = append(d.Related, analysis.RelatedInformation{
+			Pos:     decl.Name.Pos(),
+			Message: fmt.Sprintf("needed by %s, declared here", n.By),
+		})
 	}
 	if ctor, qual := x.findLocalConstructor(call, n.Type); ctor != "" {
 		d.SuggestedFixes = []analysis.SuggestedFix{{
@@ -343,6 +363,18 @@ func (x *extractor) checkCycles(call *ast.CallExpr, total *regSummary) {
 			return // one cycle per assembly is enough signal
 		}
 	}
+}
+
+// declByName finds a package-level function declaration by name.
+func (x *extractor) declByName(name string) *ast.FuncDecl {
+	for _, f := range x.pass.Files {
+		for _, decl := range f.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == name {
+				return fd
+			}
+		}
+	}
+	return nil
 }
 
 // findLocalConstructor looks for an unregistered function in this package
