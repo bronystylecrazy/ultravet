@@ -32,7 +32,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0002 ambiguity, before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors — before boot)",
 	Run:       run,
 	FactTypes: []analysis.Fact{new(regFuncsFact)},
 }
@@ -46,23 +46,32 @@ const (
 // regSummary is the statically-extracted effect of one registration
 // expression or registration-returning function.
 type regSummary struct {
-	Ctors    []ctorInfo // per-constructor granularity (cycle detection)
-	Provides []string   // extra provided types (Supply, Bind[I] facets)
-	Opaque   bool       // something was not statically resolvable
+	Ctors    []ctorInfo    // per-constructor granularity (cycle detection)
+	Provides []string      // extra provided types (Supply, Bind[I] facets)
+	Private  []privateType // provided inside an exporting module, unexported
+	Opaque   bool          // something was not statically resolvable
+}
+
+// privateType is a type trapped behind module privacy (DI0005).
+type privateType struct {
+	Type   string
+	Module string
 }
 
 // ctorInfo is one constructor's contract.
 type ctorInfo struct {
 	Name     string
+	Module   string // named module it lives in ("" = top level)
 	Provides []string
 	Needs    []need
 }
 
 type need struct {
-	Type string
-	By   string // constructor name, for the message
-	Kind needKind
-	Lazy bool // di.Lazy: still required, but breaks cycles
+	Type   string
+	By     string // constructor name, for the message
+	Module string // the consumer's module: insiders see private types
+	Kind   needKind
+	Lazy   bool // di.Lazy: still required, but breaks cycles
 }
 
 type needKind int
@@ -83,7 +92,10 @@ func (s *regSummary) allProvides() []string {
 func (s *regSummary) allNeeds() []need {
 	var out []need
 	for _, c := range s.Ctors {
-		out = append(out, c.Needs...)
+		for _, n := range c.Needs {
+			n.Module = c.Module
+			out = append(out, n)
+		}
 	}
 	return out
 }
@@ -189,6 +201,11 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 		provided[k]++
 	}
 
+	private := map[string]string{} // type → module holding it captive
+	for _, p := range total.Private {
+		private[p.Type] = p.Module
+	}
+
 	seen := map[string]bool{}
 	for _, n := range total.allNeeds() {
 		count := provided[n.Type]
@@ -197,6 +214,15 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 			key := "miss:" + n.Type + ":" + n.By
 			if !seen[key] {
 				seen[key] = true
+				if mod, trapped := private[n.Type]; trapped {
+					if mod == n.Module {
+						continue // insiders see their module's private types
+					}
+					x.pass.Reportf(call.Pos(),
+						"error[DI0005]: %s is provided inside module %q but not exported — %s cannot see it; add di.Export[%s]() to that module",
+						shortType(n.Type), mod, n.By, shortType(n.Type))
+					continue
+				}
 				x.reportMissing(call, n)
 			}
 		case count > 1 && n.Kind == needHard:
@@ -204,7 +230,7 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 			if !seen[key] {
 				seen[key] = true
 				x.pass.Reportf(call.Pos(),
-					"error[DI0002]: %d providers for %s consumed bare by %s — collect them with di.Many[%s], or remove the extras",
+					"error[DI0004]: %d providers for %s consumed bare by %s — collect them with di.Many[%s], or remove the extras",
 					count, shortType(n.Type), n.By, shortType(n.Type))
 			}
 		}
@@ -356,6 +382,7 @@ var kernelGivens = []string{
 func merge(dst *regSummary, src *regSummary) {
 	dst.Provides = append(dst.Provides, src.Provides...)
 	dst.Ctors = append(dst.Ctors, src.Ctors...)
+	dst.Private = append(dst.Private, src.Private...)
 	dst.Opaque = dst.Opaque || src.Opaque
 }
 

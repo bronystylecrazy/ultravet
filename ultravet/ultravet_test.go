@@ -10,5 +10,5 @@ import (
 
 func TestUltravet(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer,
-		"basic", "vocab", "presetlib", "presetuse", "opaque", "cycle", "dial")
+		"basic", "vocab", "presetlib", "presetuse", "opaque", "cycle", "dial", "privacy", "shape")
 }

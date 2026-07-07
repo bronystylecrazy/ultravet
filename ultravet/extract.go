@@ -1,8 +1,10 @@
 package ultravet
 
 import (
+	"fmt"
 	"go/ast"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -76,11 +78,15 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 		}
 	case "Bind":
 		// di.Bind[Iface](ctor): provides the interface AND the concrete.
-		if idx, ok := typeArg(x.pass, call); ok {
-			out.Provides = append(out.Provides, typeString(idx))
+		iface, haveIface := typeArg(x.pass, call)
+		if haveIface {
+			out.Provides = append(out.Provides, typeString(iface))
 		}
 		for _, arg := range call.Args {
 			x.addConstructor(out, arg)
+			if haveIface {
+				x.checkImplements(arg, iface)
+			}
 		}
 	case "Supply":
 		for _, arg := range call.Args {
@@ -89,9 +95,66 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 			}
 		}
 	case "Module":
-		for _, arg := range call.Args[1:] { // args[0] is the name
-			merge(out, x.summarizeExpr(arg))
+		modName := "module"
+		if len(call.Args) > 0 {
+			if lit, ok := ast.Unparen(call.Args[0]).(*ast.BasicLit); ok {
+				modName = strings.Trim(lit.Value, `"`)
+			}
 		}
+		inner := &regSummary{}
+		exports := map[string]bool{}
+		hasExports := false
+		for _, arg := range call.Args[1:] { // args[0] is the name
+			argCall, isCall := ast.Unparen(arg).(*ast.CallExpr)
+			if isCall {
+				if fn := calleeFunc(x.pass, argCall); fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == diPath {
+					switch fn.Name() {
+					case "Export":
+						hasExports = true
+						if t, ok := typeArg(x.pass, argCall); ok {
+							exports[typeString(t)] = true
+						}
+						continue
+					case "Global":
+						// Global escapes module privacy by design (cross-
+						// cutting registries) — merge outside the wall.
+						merge(out, x.summarizeCall(argCall))
+						continue
+					}
+				}
+			}
+			merge(inner, x.summarizeExpr(arg))
+		}
+		if hasExports {
+			// Privacy is opt-in: with exports declared, everything else
+			// provided inside is invisible outside (DI0005 at the assembly).
+			for i := range inner.Ctors {
+				kept := inner.Ctors[i].Provides[:0]
+				for _, p := range inner.Ctors[i].Provides {
+					if exports[p] {
+						kept = append(kept, p)
+					} else {
+						inner.Private = append(inner.Private, privateType{Type: p, Module: modName})
+					}
+				}
+				inner.Ctors[i].Provides = kept
+			}
+			for i := range inner.Ctors {
+				if inner.Ctors[i].Module == "" {
+					inner.Ctors[i].Module = modName
+				}
+			}
+			kept := inner.Provides[:0]
+			for _, p := range inner.Provides {
+				if exports[p] {
+					kept = append(kept, p)
+				} else {
+					inner.Private = append(inner.Private, privateType{Type: p, Module: modName})
+				}
+			}
+			inner.Provides = kept
+		}
+		merge(out, inner)
 	case "Options", "Global":
 		for _, arg := range call.Args {
 			merge(out, x.summarizeExpr(arg))
@@ -112,12 +175,40 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 	return out
 }
 
+// checkImplements verifies a Bind[I] constructor's concrete result
+// actually satisfies I — DI0007 with the missing method named.
+func (x *extractor) checkImplements(arg ast.Expr, ifaceT types.Type) {
+	iface, ok := ifaceT.Underlying().(*types.Interface)
+	if !ok {
+		return // concrete re-binds are the runtime's business
+	}
+	sig, ok := x.pass.TypesInfo.TypeOf(ast.Unparen(arg)).(*types.Signature)
+	if !ok || sig.Results().Len() == 0 {
+		return // DI0010 handles the shape
+	}
+	concrete := sig.Results().At(0).Type()
+	if isErrorType(concrete) || types.Implements(concrete, iface) {
+		return
+	}
+	detail := ""
+	if m, _ := types.MissingMethod(concrete, iface, true); m != nil {
+		detail = fmt.Sprintf(" — missing method %s", m.Name())
+	}
+	x.pass.Reportf(arg.Pos(),
+		"error[DI0007]: %s does not implement %s%s",
+		typeString(concrete), shortType(typeString(ifaceT)), detail)
+}
+
 // addConstructor records a constructor's provides and needs, and lints
 // its body for network calls (constructors never dial).
 func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 	t := x.pass.TypesInfo.TypeOf(ast.Unparen(arg))
 	sig, ok := t.(*types.Signature)
 	if !ok {
+		// DI0010 at the offending argument: values are Supply's job.
+		x.pass.Reportf(arg.Pos(),
+			"error[DI0010]: di.Provide takes constructor functions, got %s — for a ready value use di.Supply",
+			typeString(x.pass.TypesInfo.TypeOf(ast.Unparen(arg))))
 		out.Opaque = true
 		return
 	}
@@ -134,6 +225,11 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 			continue
 		}
 		ctor.Provides = append(ctor.Provides, typeString(rt))
+	}
+	if len(ctor.Provides) == 0 {
+		x.pass.Reportf(arg.Pos(),
+			"error[DI0010]: constructor %s returns nothing to provide — a constructor must return at least one non-error value",
+			ctor.Name)
 	}
 
 	params := sig.Params()

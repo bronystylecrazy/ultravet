@@ -36,7 +36,7 @@ func viaModuleAndSupply() {
 }
 
 func ambiguous() {
-	_, _ = di.New( // want `error\[DI0002\]: 2 providers for \*basic.Config consumed bare by NewDB`
+	_, _ = di.New( // want `error\[DI0004\]: 2 providers for \*basic.Config consumed bare by NewDB`
 		di.Provide(NewConfig, NewConfig, NewDB),
 	)
 }
