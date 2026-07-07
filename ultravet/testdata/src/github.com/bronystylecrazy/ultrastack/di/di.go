@@ -22,3 +22,9 @@ func Global(regs ...Registration) Registration    { return Registration{} }
 func Export[T any]() Registration                 { return Registration{} }
 func Decorate(fns ...any) Registration            { return Registration{} }
 func OnDemand() Registration                      { return Registration{} }
+
+func Scoped(ctors ...any) Registration { return Registration{} }
+func PerKey(keys any, ctors ...any) Registration { return Registration{} }
+func Members(ctors ...any) Registration { return Registration{} }
+
+type Scope[S any] struct{ s *S }

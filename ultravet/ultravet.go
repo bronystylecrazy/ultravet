@@ -32,7 +32,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors — before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside — before boot)",
 	Run:       run,
 	FactTypes: []analysis.Fact{new(regFuncsFact)},
 }
@@ -48,6 +48,8 @@ const (
 type regSummary struct {
 	Ctors    []ctorInfo    // per-constructor granularity (cycle detection)
 	Provides []string      // extra provided types (Supply, Bind[I] facets)
+	Scoped   []string      // provided per-Enter by di.Scoped ctors
+	Member   []string      // provided per-Spawn by di.Members ctors
 	Private  []privateType // provided inside an exporting module, unexported
 	Opaque   bool          // something was not statically resolvable
 }
@@ -205,6 +207,14 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	for _, p := range total.Private {
 		private[p.Type] = p.Module
 	}
+	scoped := map[string]bool{}
+	for _, s := range total.Scoped {
+		scoped[s] = true
+	}
+	member := map[string]bool{}
+	for _, m := range total.Member {
+		member[m] = true
+	}
 
 	seen := map[string]bool{}
 	for _, n := range total.allNeeds() {
@@ -221,6 +231,18 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 					x.pass.Reportf(call.Pos(),
 						"error[DI0005]: %s is provided inside module %q but not exported — %s cannot see it; add di.Export[%s]() to that module",
 						shortType(n.Type), mod, n.By, shortType(n.Type))
+					continue
+				}
+				if scoped[n.Type] {
+					x.pass.Reportf(call.Pos(),
+						"error[DI0101]: %s (singleton) depends on %s (scoped) — a singleton would capture one scope's instance forever; hold di.Scope[YourScope] and Enter per operation",
+						n.By, shortType(n.Type))
+					continue
+				}
+				if member[n.Type] {
+					x.pass.Reportf(call.Pos(),
+						"error[DI0106]: %s consumes family member %s directly — members exist only between Spawn and Stop; take di.Family[S] and act per key",
+						n.By, shortType(n.Type))
 					continue
 				}
 				x.reportMissing(call, n)
@@ -382,6 +404,8 @@ var kernelGivens = []string{
 func merge(dst *regSummary, src *regSummary) {
 	dst.Provides = append(dst.Provides, src.Provides...)
 	dst.Ctors = append(dst.Ctors, src.Ctors...)
+	dst.Scoped = append(dst.Scoped, src.Scoped...)
+	dst.Member = append(dst.Member, src.Member...)
 	dst.Private = append(dst.Private, src.Private...)
 	dst.Opaque = dst.Opaque || src.Opaque
 }

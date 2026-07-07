@@ -155,15 +155,28 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 			inner.Provides = kept
 		}
 		merge(out, inner)
+	case "Scoped":
+		// Scoped ctors provide per-Enter values. Their needs may be seeds
+		// (unprovided scope-struct fields), so we record only the provides
+		// — consuming them from a SINGLETON is the captive bug (DI0101).
+		for _, arg := range call.Args {
+			out.Scoped = append(out.Scoped, x.resultTypes(arg)...)
+		}
 	case "Options", "Global":
 		for _, arg := range call.Args {
 			merge(out, x.summarizeExpr(arg))
 		}
 	case "Export", "Decorate", "OnDemand", "StopTimeout", "NonCritical":
 		// No provides/needs of their own (Decorate wraps existing types).
-	case "PerKey", "Members":
-		// Family/keyed constructors: their instances are keyed, consumed
-		// via di.Keyed/di.Family (kernel-given) — nothing bare to check.
+	case "Members":
+		// Family members exist only between Spawn and Stop; consuming one
+		// bare from a singleton is DI0106.
+		for _, arg := range call.Args {
+			out.Member = append(out.Member, x.resultTypes(arg)...)
+		}
+	case "PerKey":
+		// Keyed instances are consumed via di.Keyed (kernel-given) —
+		// nothing bare to check.
 	case "Swap":
 		// Test-only override: provides the swapped type.
 		if idx, ok := typeArg(x.pass, call); ok {
@@ -171,6 +184,22 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 		}
 	default:
 		out.Opaque = true
+	}
+	return out
+}
+
+// resultTypes lists a constructor's non-error result type strings —
+// for pools whose needs we deliberately do not model (scoped, member).
+func (x *extractor) resultTypes(arg ast.Expr) []string {
+	sig, ok := x.pass.TypesInfo.TypeOf(ast.Unparen(arg)).(*types.Signature)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for i := 0; i < sig.Results().Len(); i++ {
+		if rt := sig.Results().At(i).Type(); !isErrorType(rt) {
+			out = append(out, typeString(rt))
+		}
 	}
 	return out
 }
