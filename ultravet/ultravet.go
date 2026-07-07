@@ -21,6 +21,7 @@
 package ultravet
 
 import (
+	"fmt"
 	"go/ast"
 	"go/types"
 	"sort"
@@ -45,15 +46,23 @@ const (
 // regSummary is the statically-extracted effect of one registration
 // expression or registration-returning function.
 type regSummary struct {
-	Provides []string  // type strings provided
-	Needs    []need    // constructor dependencies
-	Opaque   bool      // something was not statically resolvable
+	Ctors    []ctorInfo // per-constructor granularity (cycle detection)
+	Provides []string   // extra provided types (Supply, Bind[I] facets)
+	Opaque   bool       // something was not statically resolvable
+}
+
+// ctorInfo is one constructor's contract.
+type ctorInfo struct {
+	Name     string
+	Provides []string
+	Needs    []need
 }
 
 type need struct {
 	Type string
 	By   string // constructor name, for the message
 	Kind needKind
+	Lazy bool // di.Lazy: still required, but breaks cycles
 }
 
 type needKind int
@@ -62,6 +71,22 @@ const (
 	needHard needKind = iota // bare or Lazy: must exist
 	needSoft                 // Optional / Many / variadic: absence is fine
 )
+
+func (s *regSummary) allProvides() []string {
+	out := append([]string{}, s.Provides...)
+	for _, c := range s.Ctors {
+		out = append(out, c.Provides...)
+	}
+	return out
+}
+
+func (s *regSummary) allNeeds() []need {
+	var out []need
+	for _, c := range s.Ctors {
+		out = append(out, c.Needs...)
+	}
+	return out
+}
 
 // regFuncsFact carries, per package, the summaries of exported functions
 // that return di.Registration — how preset knowledge crosses packages.
@@ -81,7 +106,7 @@ func (f *regFuncsFact) String() string {
 }
 
 func run(pass *analysis.Pass) (any, error) {
-	x := &extractor{pass: pass, memo: map[types.Object]*regSummary{}}
+	x := &extractor{pass: pass, memo: map[types.Object]*regSummary{}, linted: map[*ast.FuncDecl]bool{}}
 
 	// 1. Summarize this package's exported registration-returning funcs
 	//    and export the fact for downstream packages.
@@ -157,7 +182,7 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	}
 
 	provided := map[string]int{}
-	for _, p := range total.Provides {
+	for _, p := range total.allProvides() {
 		provided[p]++
 	}
 	for _, k := range kernelGivens {
@@ -165,16 +190,14 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	}
 
 	seen := map[string]bool{}
-	for _, n := range total.Needs {
+	for _, n := range total.allNeeds() {
 		count := provided[n.Type]
 		switch {
 		case count == 0 && n.Kind == needHard:
 			key := "miss:" + n.Type + ":" + n.By
 			if !seen[key] {
 				seen[key] = true
-				x.pass.Reportf(call.Pos(),
-					"error[DI0001]: no provider for %s (needed by %s) — add a di.Provide/Supply for it, or take di.Optional[%s]",
-					shortType(n.Type), n.By, shortType(n.Type))
+				x.reportMissing(call, n)
 			}
 		case count > 1 && n.Kind == needHard:
 			key := "amb:" + n.Type
@@ -186,6 +209,140 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 			}
 		}
 	}
+
+	x.checkCycles(call, &total)
+}
+
+// reportMissing emits DI0001 — with a one-click fix when an unregistered
+// constructor for the missing type exists in this package.
+func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
+	d := analysis.Diagnostic{
+		Pos: call.Pos(),
+		Message: fmt.Sprintf(
+			"error[DI0001]: no provider for %s (needed by %s) — add a di.Provide/Supply for it, or take di.Optional[%s]",
+			shortType(n.Type), n.By, shortType(n.Type)),
+	}
+	if ctor, qual := x.findLocalConstructor(call, n.Type); ctor != "" {
+		d.SuggestedFixes = []analysis.SuggestedFix{{
+			Message: fmt.Sprintf("Register %s, which provides %s", ctor, shortType(n.Type)),
+			TextEdits: []analysis.TextEdit{{
+				Pos: call.Lparen + 1, End: call.Lparen + 1,
+				NewText: []byte(fmt.Sprintf("\n\t\t%s.Provide(%s),", qual, ctor)),
+			}},
+		}}
+	}
+	x.pass.Report(d)
+}
+
+// checkCycles finds hard dependency cycles among the assembly's
+// constructors (di.Lazy edges break them — that IS the documented fix).
+func (x *extractor) checkCycles(call *ast.CallExpr, total *regSummary) {
+	providerOf := map[string]int{} // type → ctor index
+	for i, c := range total.Ctors {
+		for _, p := range c.Provides {
+			providerOf[p] = i
+		}
+	}
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	color := make([]int, len(total.Ctors))
+	var stack []int
+	var cycle []int
+
+	var visit func(i int) bool
+	visit = func(i int) bool {
+		color[i] = gray
+		stack = append(stack, i)
+		for _, n := range total.Ctors[i].Needs {
+			if n.Lazy || n.Kind == needSoft {
+				continue
+			}
+			j, ok := providerOf[n.Type]
+			if !ok {
+				continue
+			}
+			switch color[j] {
+			case gray:
+				for k, v := range stack {
+					if v == j {
+						cycle = append([]int{}, stack[k:]...)
+						return true
+					}
+				}
+			case white:
+				if visit(j) {
+					return true
+				}
+			}
+		}
+		stack = stack[:len(stack)-1]
+		color[i] = black
+		return false
+	}
+	for i := range total.Ctors {
+		if color[i] == white && visit(i) {
+			names := make([]string, 0, len(cycle)+1)
+			for _, idx := range cycle {
+				names = append(names, total.Ctors[idx].Name)
+			}
+			names = append(names, total.Ctors[cycle[0]].Name)
+			x.pass.Reportf(call.Pos(),
+				"error[DI0003]: dependency cycle: %s — break it by taking di.Lazy[T] at one edge",
+				strings.Join(names, " → "))
+			return // one cycle per assembly is enough signal
+		}
+	}
+}
+
+// findLocalConstructor looks for an unregistered function in this package
+// returning the missing type, and the di import qualifier of the file
+// containing the assembly.
+func (x *extractor) findLocalConstructor(call *ast.CallExpr, typ string) (ctor, qualifier string) {
+	var file *ast.File
+	for _, f := range x.pass.Files {
+		if f.Pos() <= call.Pos() && call.End() <= f.End() {
+			file = f
+			break
+		}
+	}
+	if file == nil {
+		return "", ""
+	}
+	qual := ""
+	for _, imp := range file.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if path == diPath {
+			qual = "di"
+			if imp.Name != nil {
+				qual = imp.Name.Name
+			}
+		}
+	}
+	if qual == "" {
+		return "", "" // di not imported here: no safe textual fix
+	}
+	for _, f := range x.pass.Files {
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv != nil || fd.Type.Results == nil {
+				continue
+			}
+			fn, _ := x.pass.TypesInfo.Defs[fd.Name].(*types.Func)
+			if fn == nil {
+				continue
+			}
+			sig := fn.Type().(*types.Signature)
+			for i := 0; i < sig.Results().Len(); i++ {
+				if typeString(sig.Results().At(i).Type()) == typ {
+					return fd.Name.Name, qual
+				}
+			}
+		}
+	}
+	return "", ""
 }
 
 // kernelGivens are types the runtime injects without registration.
@@ -198,7 +355,7 @@ var kernelGivens = []string{
 
 func merge(dst *regSummary, src *regSummary) {
 	dst.Provides = append(dst.Provides, src.Provides...)
-	dst.Needs = append(dst.Needs, src.Needs...)
+	dst.Ctors = append(dst.Ctors, src.Ctors...)
 	dst.Opaque = dst.Opaque || src.Opaque
 }
 

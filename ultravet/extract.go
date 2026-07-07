@@ -10,8 +10,9 @@ import (
 // extractor turns registration expressions into regSummaries, resolving
 // through local functions and imported-package facts.
 type extractor struct {
-	pass *analysis.Pass
-	memo map[types.Object]*regSummary
+	pass   *analysis.Pass
+	memo   map[types.Object]*regSummary
+	linted map[*ast.FuncDecl]bool
 }
 
 // summarizeExpr resolves one registration-valued expression.
@@ -111,7 +112,8 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 	return out
 }
 
-// addConstructor records a constructor's provides and needs.
+// addConstructor records a constructor's provides and needs, and lints
+// its body for network calls (constructors never dial).
 func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 	t := x.pass.TypesInfo.TypeOf(ast.Unparen(arg))
 	sig, ok := t.(*types.Signature)
@@ -119,9 +121,10 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 		out.Opaque = true
 		return
 	}
-	ctorName := "constructor"
-	if fn := exprFunc(x.pass, arg); fn != nil {
-		ctorName = fn.Name()
+	ctor := ctorInfo{Name: "constructor"}
+	fn := exprFunc(x.pass, arg)
+	if fn != nil {
+		ctor.Name = fn.Name()
 	}
 
 	res := sig.Results()
@@ -130,7 +133,7 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 		if isErrorType(rt) {
 			continue
 		}
-		out.Provides = append(out.Provides, typeString(rt))
+		ctor.Provides = append(ctor.Provides, typeString(rt))
 	}
 
 	params := sig.Params()
@@ -139,39 +142,84 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 			continue // options: absence is fine
 		}
 		pt := params.At(i).Type()
-		typ, kind, given := classifyDep(pt)
+		dep, given := classifyDep(pt)
 		if given {
 			continue
 		}
-		out.Needs = append(out.Needs, need{Type: typ, By: ctorName, Kind: kind})
+		dep.By = ctor.Name
+		ctor.Needs = append(ctor.Needs, dep)
+	}
+	out.Ctors = append(out.Ctors, ctor)
+
+	if fn != nil && fn.Pkg() == x.pass.Pkg {
+		if decl := x.localDecl(fn); decl != nil {
+			x.lintCtorBody(ctor.Name, decl)
+		}
 	}
 }
 
+// dialers are calls a constructor must not make — connection belongs in
+// Start(ctx), where the boot timeout, parallelism, and health apply.
+var dialers = map[string]map[string]bool{
+	"net":      {"Dial": true, "DialTimeout": true, "DialTCP": true, "Listen": true, "ListenTCP": true},
+	"net/http": {"Get": true, "Post": true, "PostForm": true, "Head": true},
+	"github.com/jackc/pgx/v5/pgxpool": {"New": true, "NewWithConfig": true, "Connect": true},
+	"google.golang.org/grpc":          {"Dial": true, "DialContext": true, "NewClient": true},
+}
+
+func (x *extractor) lintCtorBody(name string, decl *ast.FuncDecl) {
+	if decl.Body == nil || x.linted[decl] {
+		return
+	}
+	x.linted[decl] = true
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		if _, isFn := n.(*ast.FuncLit); isFn {
+			return false // closures run later (Runner, hooks): not a boot dial
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fn := calleeFunc(x.pass, call)
+		if fn == nil || fn.Pkg() == nil {
+			return true
+		}
+		if names, ok := dialers[fn.Pkg().Path()]; ok && names[fn.Name()] {
+			x.pass.Reportf(call.Pos(),
+				"warning[UV0001]: constructor %s calls %s.%s — constructors never dial; connect in Start(ctx) so the boot timeout, parallel start, and health apply",
+				name, fn.Pkg().Name(), fn.Name())
+		}
+		return true
+	})
+}
+
 // classifyDep unwraps the consumer-type vocabulary.
-func classifyDep(t types.Type) (typeStr string, kind needKind, kernelGiven bool) {
+func classifyDep(t types.Type) (dep need, kernelGiven bool) {
 	if named, ok := t.(*types.Named); ok && named.Obj().Pkg() != nil &&
 		named.Obj().Pkg().Path() == diPath {
 		args := named.TypeArgs()
 		switch named.Obj().Name() {
 		case "Many", "Optional":
 			if args.Len() == 1 {
-				return typeString(args.At(0)), needSoft, false
+				return need{Type: typeString(args.At(0)), Kind: needSoft}, false
 			}
 		case "Lazy":
 			if args.Len() == 1 {
-				return typeString(args.At(0)), needHard, false
+				// Still required — but the edge breaks cycles: that IS
+				// the documented DI0003 fix.
+				return need{Type: typeString(args.At(0)), Kind: needHard, Lazy: true}, false
 			}
 		case "Runner", "Key", "Keyed", "Family", "Scope":
-			return "", 0, true // kernel-given / separately validated
+			return need{}, true // kernel-given / separately validated
 		}
 	}
 	if ptr, ok := t.(*types.Pointer); ok {
 		if named, ok := ptr.Elem().(*types.Named); ok && named.Obj().Pkg() != nil &&
 			named.Obj().Pkg().Path() == diPath && named.Obj().Name() == "App" {
-			return "", 0, true
+			return need{}, true
 		}
 	}
-	return typeString(t), needHard, false
+	return need{Type: typeString(t), Kind: needHard}, false
 }
 
 // summarizeFunc summarizes the body of a registration-returning function:
