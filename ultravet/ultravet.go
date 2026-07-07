@@ -28,6 +28,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
+
+	"github.com/bronystylecrazy/ultrastack/di/graphcheck"
 )
 
 var Analyzer = &analysis.Analyzer{
@@ -218,43 +220,59 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 
 	seen := map[string]bool{}
 	for _, n := range total.allNeeds() {
-		count := provided[n.Type]
-		switch {
-		case count == 0 && n.Kind == needHard:
-			key := "miss:" + n.Type + ":" + n.By
-			if !seen[key] {
-				seen[key] = true
-				if mod, trapped := private[n.Type]; trapped {
-					if mod == n.Module {
-						continue // insiders see their module's private types
-					}
-					x.reportAt(call, n, fmt.Sprintf(
-						"error[DI0005]: %s is provided inside module %q but not exported — %s cannot see it; add di.Export[%s]() to that module",
-						shortType(n.Type), mod, n.By, shortType(n.Type)))
-					continue
-				}
-				if scoped[n.Type] {
-					x.reportAt(call, n, fmt.Sprintf(
-						"error[DI0101]: %s (singleton) depends on %s (scoped) — a singleton would capture one scope's instance forever; hold di.Scope[YourScope] and Enter per operation",
-						n.By, shortType(n.Type)))
-					continue
-				}
-				if member[n.Type] {
-					x.reportAt(call, n, fmt.Sprintf(
-						"error[DI0106]: %s consumes family member %s directly — members exist only between Spawn and Stop; take di.Family[S] and act per key",
-						n.By, shortType(n.Type)))
-					continue
-				}
-				x.reportMissing(call, n)
+		// Discovery is ours (visibility, pools); MEANING is shared with
+		// the runtime resolver via graphcheck — parity by construction.
+		kind := graphcheck.Bare
+		if n.Kind == needSoft {
+			kind = graphcheck.Many // soft: Many/Optional/variadic all tolerate absence
+		} else if n.Lazy {
+			kind = graphcheck.Lazy
+		}
+		cands := graphcheck.Candidates{Singleton: provided[n.Type]}
+		if mod, trapped := private[n.Type]; trapped {
+			if mod == n.Module {
+				cands.Singleton++ // insiders see their module's private types
+			} else {
+				cands.Unexported++
 			}
-		case count > 1 && n.Kind == needHard:
-			key := "amb:" + n.Type
-			if !seen[key] {
-				seen[key] = true
-				x.pass.Reportf(call.Pos(),
-					"error[DI0004]: %d providers for %s consumed bare by %s — collect them with di.Many[%s], or remove the extras",
-					count, shortType(n.Type), n.By, shortType(n.Type))
-			}
+		}
+		if scoped[n.Type] {
+			cands.Scoped++
+		}
+		if member[n.Type] {
+			cands.Member++
+		}
+		verdict := graphcheck.Resolve(kind, cands)
+		if verdict == graphcheck.OK {
+			continue
+		}
+		key := verdict.Code() + ":" + n.Type + ":" + n.By
+		if verdict == graphcheck.Ambiguous {
+			key = verdict.Code() + ":" + n.Type
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		switch verdict {
+		case graphcheck.Missing:
+			x.reportMissing(call, n)
+		case graphcheck.Ambiguous:
+			x.pass.Reportf(call.Pos(),
+				"error[DI0004]: %d providers for %s consumed bare by %s — collect them with di.Many[%s], or remove the extras",
+				cands.Singleton, shortType(n.Type), n.By, shortType(n.Type))
+		case graphcheck.NotExported:
+			x.reportAt(call, n, fmt.Sprintf(
+				"error[DI0005]: %s is provided inside module %q but not exported — %s cannot see it; add di.Export[%s]() to that module",
+				shortType(n.Type), private[n.Type], n.By, shortType(n.Type)))
+		case graphcheck.Captive:
+			x.reportAt(call, n, fmt.Sprintf(
+				"error[DI0101]: %s (singleton) depends on %s (scoped) — a singleton would capture one scope's instance forever; hold di.Scope[YourScope] and Enter per operation",
+				n.By, shortType(n.Type)))
+		case graphcheck.MemberOutside:
+			x.reportAt(call, n, fmt.Sprintf(
+				"error[DI0106]: %s consumes family member %s directly — members exist only between Spawn and Stop; take di.Family[S] and act per key",
+				n.By, shortType(n.Type)))
 		}
 	}
 
@@ -305,64 +323,26 @@ func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
 // checkCycles finds hard dependency cycles among the assembly's
 // constructors (di.Lazy edges break them — that IS the documented fix).
 func (x *extractor) checkCycles(call *ast.CallExpr, total *regSummary) {
-	providerOf := map[string]int{} // type → ctor index
+	nodes := make([]graphcheck.Node, len(total.Ctors))
 	for i, c := range total.Ctors {
-		for _, p := range c.Provides {
-			providerOf[p] = i
+		nodes[i].Provides = c.Provides
+		for _, n := range c.Needs {
+			nodes[i].Needs = append(nodes[i].Needs,
+				graphcheck.Edge{Type: n.Type, Soft: n.Lazy || n.Kind == needSoft})
 		}
 	}
-	const (
-		white = 0
-		gray  = 1
-		black = 2
-	)
-	color := make([]int, len(total.Ctors))
-	var stack []int
-	var cycle []int
-
-	var visit func(i int) bool
-	visit = func(i int) bool {
-		color[i] = gray
-		stack = append(stack, i)
-		for _, n := range total.Ctors[i].Needs {
-			if n.Lazy || n.Kind == needSoft {
-				continue
-			}
-			j, ok := providerOf[n.Type]
-			if !ok {
-				continue
-			}
-			switch color[j] {
-			case gray:
-				for k, v := range stack {
-					if v == j {
-						cycle = append([]int{}, stack[k:]...)
-						return true
-					}
-				}
-			case white:
-				if visit(j) {
-					return true
-				}
-			}
-		}
-		stack = stack[:len(stack)-1]
-		color[i] = black
-		return false
+	cycle := graphcheck.FindCycle(nodes)
+	if cycle == nil {
+		return
 	}
-	for i := range total.Ctors {
-		if color[i] == white && visit(i) {
-			names := make([]string, 0, len(cycle)+1)
-			for _, idx := range cycle {
-				names = append(names, total.Ctors[idx].Name)
-			}
-			names = append(names, total.Ctors[cycle[0]].Name)
-			x.pass.Reportf(call.Pos(),
-				"error[DI0003]: dependency cycle: %s — break it by taking di.Lazy[T] at one edge",
-				strings.Join(names, " → "))
-			return // one cycle per assembly is enough signal
-		}
+	names := make([]string, 0, len(cycle)+1)
+	for _, idx := range cycle {
+		names = append(names, total.Ctors[idx].Name)
 	}
+	names = append(names, total.Ctors[cycle[0]].Name)
+	x.pass.Reportf(call.Pos(),
+		"error[DI0003]: dependency cycle: %s — break it by taking di.Lazy[T] at one edge",
+		strings.Join(names, " → "))
 }
 
 // declByName finds a package-level function declaration by name.
