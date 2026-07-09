@@ -9,5 +9,5 @@ import (
 )
 
 func TestSuggestedFixes(t *testing.T) {
-	analysistest.RunWithSuggestedFixes(t, analysistest.TestData(), ultravet.Analyzer, "fix")
+	analysistest.RunWithSuggestedFixes(t, analysistest.TestData(), ultravet.Analyzer, "fix", "permfix")
 }

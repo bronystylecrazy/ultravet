@@ -1,0 +1,7 @@
+[auth]
+idle = "1h"
+
+[auth.roles]
+admin  = ["*"]
+viewer = ["speed.read", "zones.read"]
+editor = ["zones.write", "cameras.*"]

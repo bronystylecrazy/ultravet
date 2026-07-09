@@ -34,7 +34,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside — before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants — before boot)",
 	Run:       run,
 	FactTypes: []analysis.Fact{new(regFuncsFact)},
 }
@@ -158,6 +158,9 @@ func run(pass *analysis.Pass) (any, error) {
 			return true
 		})
 	}
+
+	// 3. UV0002: required permissions vs. the product's configured roles.
+	x.checkPermissions()
 	return nil, nil
 }
 

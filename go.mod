@@ -2,7 +2,10 @@ module github.com/bronystylecrazy/ultrastack/analyzer
 
 go 1.26.3
 
-require golang.org/x/tools v0.47.0
+require (
+	github.com/BurntSushi/toml v1.6.0
+	golang.org/x/tools v0.47.0
+)
 
 require (
 	github.com/bronystylecrazy/ultrastack v0.3.0
