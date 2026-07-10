@@ -10,9 +10,9 @@ type DB struct{}
 type Repo struct{}
 type Route struct{}
 
-func NewConfig() *Config      { return &Config{} }
-func NewDB(cfg *Config) *DB   { return &DB{} }
-func NewRepo(db *DB) *Repo    { return &Repo{} }
+func NewConfig() *Config    { return &Config{} }
+func NewDB(cfg *Config) *DB { return &DB{} }
+func NewRepo(db *DB) *Repo  { return &Repo{} }
 
 // Privacy is opt-in: this module exports *DB only; *Config stays inside.
 func dbModule() di.Registration {

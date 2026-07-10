@@ -12,9 +12,9 @@ type Feed struct{}
 type Router struct{}
 type CamScope struct{ Tx *Tx }
 
-func NewConfig() *Config       { return &Config{} }
-func NewTx(cfg *Config) *Tx    { return &Tx{} }
-func NewFeed(k di.Key) *Feed   { return &Feed{} }
+func NewConfig() *Config     { return &Config{} }
+func NewTx(cfg *Config) *Tx  { return &Tx{} }
+func NewFeed(k di.Key) *Feed { return &Feed{} }
 
 // The classic captive bug: a singleton holding one scope's Tx forever.
 func NewServer(tx *Tx) *Server { return &Server{} }

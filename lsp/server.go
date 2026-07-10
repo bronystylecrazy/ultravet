@@ -41,9 +41,9 @@ type Server struct {
 
 	mu        sync.Mutex // guards out and state
 	rootDir   string
-	published map[string]bool               // URIs with active diagnostics
-	fixes     map[string][]fixEntry         // URI → available quick-fixes
-	analyzeMu sync.Mutex                    // one analysis at a time
+	published map[string]bool       // URIs with active diagnostics
+	fixes     map[string][]fixEntry // URI → available quick-fixes
+	analyzeMu sync.Mutex            // one analysis at a time
 }
 
 type fixEntry struct {
@@ -64,12 +64,12 @@ func New(in io.Reader, out io.Writer) *Server {
 // ---- wire types (the slice of LSP we speak) ----
 
 type rpcMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
+	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Result  any              `json:"result,omitempty"`
+	Error   *rpcError        `json:"error,omitempty"`
 }
 
 type rpcError struct {
@@ -93,12 +93,12 @@ type location struct {
 }
 
 type lspDiagnostic struct {
-	Range    lspRange   `json:"range"`
-	Severity int        `json:"severity"` // 1 error, 2 warning
-	Code     string     `json:"code,omitempty"`
-	Source   string     `json:"source"`
-	Message  string     `json:"message"`
-	Related  []related  `json:"relatedInformation,omitempty"`
+	Range    lspRange  `json:"range"`
+	Severity int       `json:"severity"` // 1 error, 2 warning
+	Code     string    `json:"code,omitempty"`
+	Source   string    `json:"source"`
+	Message  string    `json:"message"`
+	Related  []related `json:"relatedInformation,omitempty"`
 }
 
 type related struct {

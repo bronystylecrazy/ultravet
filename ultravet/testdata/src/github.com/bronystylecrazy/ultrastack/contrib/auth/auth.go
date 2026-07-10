@@ -4,5 +4,5 @@ package auth
 
 import "context"
 
-func Require(ctx context.Context, permission string) error         { return nil }
-func RequireAny(ctx context.Context, permissions ...string) error  { return nil }
+func Require(ctx context.Context, permission string) error        { return nil }
+func RequireAny(ctx context.Context, permissions ...string) error { return nil }

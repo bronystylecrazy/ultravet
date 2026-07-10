@@ -8,8 +8,8 @@ import (
 type Config struct{}
 type DB struct{}
 
-func NewConfig() *Config     { return &Config{} }
-func NewDB(cfg *Config) *DB  { return &DB{} }
+func NewConfig() *Config    { return &Config{} }
+func NewDB(cfg *Config) *DB { return &DB{} }
 
 func assemble() {
 	stack.Run( // want `error\[DI0001\]: no provider for \*fix.Config \(needed by NewDB\)`

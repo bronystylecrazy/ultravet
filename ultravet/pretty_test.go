@@ -24,9 +24,9 @@ func TestRenderDiagnosticRustStyle(t *testing.T) {
 	related := f.LineStart(3) + token.Pos(5)
 
 	out := RenderDiagnostic(fset, analysis.Diagnostic{
-		Pos:     primary,
-		Message: "error[DI0001]: no provider for *p.Config (needed by NewServer) — add a di.Provide/Supply for it",
-		Related: []analysis.RelatedInformation{{Pos: related, Message: "needed by NewServer, declared here"}},
+		Pos:            primary,
+		Message:        "error[DI0001]: no provider for *p.Config (needed by NewServer) — add a di.Provide/Supply for it",
+		Related:        []analysis.RelatedInformation{{Pos: related, Message: "needed by NewServer, declared here"}},
 		SuggestedFixes: []analysis.SuggestedFix{{Message: "Register NewConfig"}},
 	}, false)
 

@@ -162,7 +162,13 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 		for _, arg := range call.Args {
 			out.Scoped = append(out.Scoped, x.resultTypes(arg)...)
 		}
-	case "Options", "Global":
+	case "Options", "Global", "Tolerate":
+		// Tolerate wraps registrations that become NonCritical at runtime —
+		// but criticality is a boot-time (Start-hook) property the wiring
+		// checks do not model. For graph reconstruction its contents behave
+		// exactly like Options: providers register normally and stay visible,
+		// so a consumer of a Tolerate-wrapped provider is resolved, not
+		// falsely flagged DI0001. (Tolerate is NOT opaque.)
 		for _, arg := range call.Args {
 			merge(out, x.summarizeExpr(arg))
 		}
@@ -286,8 +292,8 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 // dialers are calls a constructor must not make — connection belongs in
 // Start(ctx), where the boot timeout, parallelism, and health apply.
 var dialers = map[string]map[string]bool{
-	"net":      {"Dial": true, "DialTimeout": true, "DialTCP": true, "Listen": true, "ListenTCP": true},
-	"net/http": {"Get": true, "Post": true, "PostForm": true, "Head": true},
+	"net":                             {"Dial": true, "DialTimeout": true, "DialTCP": true, "Listen": true, "ListenTCP": true},
+	"net/http":                        {"Get": true, "Post": true, "PostForm": true, "Head": true},
 	"github.com/jackc/pgx/v5/pgxpool": {"New": true, "NewWithConfig": true, "Connect": true},
 	"google.golang.org/grpc":          {"Dial": true, "DialContext": true, "NewClient": true},
 }

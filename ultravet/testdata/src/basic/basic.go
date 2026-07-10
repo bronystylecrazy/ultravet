@@ -9,9 +9,9 @@ type Config struct{ URL string }
 type DB struct{ cfg *Config }
 type Server struct{ db *DB }
 
-func NewDB(cfg *Config) *DB          { return &DB{cfg: cfg} }
-func NewServer(db *DB) *Server       { return &Server{db: db} }
-func NewConfig() *Config             { return &Config{} }
+func NewDB(cfg *Config) *DB    { return &DB{cfg: cfg} }
+func NewServer(db *DB) *Server { return &Server{db: db} }
+func NewConfig() *Config       { return &Config{} }
 
 func missingProvider() {
 	stack.Run( // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
