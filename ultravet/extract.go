@@ -74,6 +74,9 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 	switch name {
 	case "Provide", "Default":
 		for _, arg := range call.Args {
+			if x.provideOptionArg(out, arg) {
+				continue // di.As[...]() / di.NonCritical: not a constructor
+			}
 			x.addConstructor(out, arg)
 		}
 	case "Bind":
@@ -83,6 +86,9 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 			out.Provides = append(out.Provides, typeString(iface))
 		}
 		for _, arg := range call.Args {
+			if x.provideOptionArg(out, arg) {
+				continue // Bind forwards trailing ProvideOptions to Provide
+			}
 			x.addConstructor(out, arg)
 			if haveIface {
 				x.checkImplements(arg, iface)
@@ -232,6 +238,37 @@ func (x *extractor) checkImplements(arg ast.Expr, ifaceT types.Type) {
 	x.pass.Reportf(arg.Pos(),
 		"error[DI0007]: %s does not implement %s%s",
 		typeString(concrete), shortType(typeString(ifaceT)), detail)
+}
+
+// provideOptionArg reports whether arg is a ProvideOption VALUE mixed into a
+// Provide/Bind variadic list — di.As[Iface]() or di.NonCritical — rather than
+// a constructor. The real kernel accepts these interleaved with constructors
+// (see di.Provide), so treating them as constructors would emit a false
+// DI0010. When arg is di.As[Iface](), the facet interface is registered as
+// provided exactly as di.Bind[Iface] does, so a consumer of Iface resolves;
+// other options (di.NonCritical) carry runtime-only meaning the wiring checks
+// do not model and are skipped. Returns true when arg must NOT be treated as a
+// constructor.
+func (x *extractor) provideOptionArg(out *regSummary, arg ast.Expr) bool {
+	// di.As[Iface]() — model the facet the same way Bind[Iface] does.
+	if call, ok := ast.Unparen(arg).(*ast.CallExpr); ok {
+		if fn := calleeFunc(x.pass, call); fn != nil && fn.Pkg() != nil &&
+			fn.Pkg().Path() == diPath && fn.Name() == "As" {
+			if iface, ok := typeArg(x.pass, call); ok {
+				out.Provides = append(out.Provides, typeString(iface))
+			}
+			return true
+		}
+	}
+	// Any other value statically typed di.ProvideOption (e.g. di.NonCritical).
+	return isProvideOptionType(x.pass.TypesInfo.TypeOf(ast.Unparen(arg)))
+}
+
+// isProvideOptionType reports whether t is the kernel's di.ProvideOption.
+func isProvideOptionType(t types.Type) bool {
+	named, ok := t.(*types.Named)
+	return ok && named.Obj().Pkg() != nil &&
+		named.Obj().Pkg().Path() == diPath && named.Obj().Name() == "ProvideOption"
 }
 
 // addConstructor records a constructor's provides and needs, and lints

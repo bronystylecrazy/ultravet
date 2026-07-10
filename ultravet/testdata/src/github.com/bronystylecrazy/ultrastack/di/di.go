@@ -29,3 +29,11 @@ func PerKey(keys any, ctors ...any) Registration { return Registration{} }
 func Members(ctors ...any) Registration          { return Registration{} }
 
 type Scope[S any] struct{ s *S }
+
+// ProvideOption values may be interleaved with constructors in a di.Provide
+// call — di.As[I]() and di.NonCritical.
+type ProvideOption interface{ provideOption() }
+
+func As[I any]() ProvideOption { return nil }
+
+var NonCritical ProvideOption
