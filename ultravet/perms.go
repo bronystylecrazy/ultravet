@@ -45,6 +45,80 @@ func (x *extractor) checkPermissions() {
 		}
 		x.reportUnknownPerm(req, granted)
 	}
+	x.checkMQTTGrants(granted)
+}
+
+// mqttPubPrefix and mqttSubPrefix mark contrib/mqtt permission grants whose
+// remainder is an MQTT topic filter (contrib/mqtt's ACL matches devices against
+// these). Both directions of the milestone-48 lint live here.
+const (
+	mqttPubPrefix = "mqtt.pub:"
+	mqttSubPrefix = "mqtt.sub:"
+)
+
+// checkMQTTGrants validates that every mqtt.pub:/mqtt.sub: permission GRANTED by
+// a role in config.toml is a well-formed MQTT topic filter after the prefix. A
+// malformed filter is dead grant — it can never match a real topic — so it is a
+// typo caught here rather than a device that mysteriously cannot subscribe.
+//
+// The check is the reverse of the required-permission direction and the only
+// mqtt.* thing statically checkable: mqtt.On/ToHub patterns are topic filters,
+// not permissions, and topics are a runtime value the route side never spells
+// out. Grants have no Go position, so the diagnostic anchors at the package
+// clause and names config.toml + the offending grant in the message.
+func (x *extractor) checkMQTTGrants(granted map[string]bool) {
+	if len(x.pass.Files) == 0 {
+		return
+	}
+	anchor := x.pass.Files[0].Name.Pos()
+	grants := make([]string, 0, len(granted))
+	for g := range granted {
+		grants = append(grants, g)
+	}
+	sort.Strings(grants) // deterministic report order
+	for _, g := range grants {
+		var filter string
+		switch {
+		case strings.HasPrefix(g, mqttPubPrefix):
+			filter = g[len(mqttPubPrefix):]
+		case strings.HasPrefix(g, mqttSubPrefix):
+			filter = g[len(mqttSubPrefix):]
+		default:
+			continue
+		}
+		reason, fix := validateMQTTFilter(filter)
+		if reason == "" {
+			continue
+		}
+		x.pass.Reportf(anchor,
+			"warning[UV0002]: permission %q in config.toml [auth.roles] is not a well-formed MQTT topic filter: %s — %s",
+			g, reason, fix)
+	}
+}
+
+// validateMQTTFilter returns a reason and a paste-able fix when filter is not a
+// valid MQTT topic filter, or ("", "") when it is well-formed. It mirrors
+// contrib/mqtt.ValidateFilter (the analyzer cannot import contrib).
+func validateMQTTFilter(filter string) (reason, fix string) {
+	if filter == "" {
+		return "the filter is empty", "give it at least one level, e.g. \"telemetry/#\""
+	}
+	levels := strings.Split(filter, "/")
+	for i, lvl := range levels {
+		switch {
+		case lvl == "+" || lvl == "" || lvl == "#":
+			if lvl == "#" && i != len(levels)-1 {
+				return `"#" is not the last level`, `move "#" to the final level (it matches everything beneath), e.g. "telemetry/#"`
+			}
+		case strings.Contains(lvl, "#"):
+			return `"#" shares a level with other characters (in "` + lvl + `")`,
+				`give "#" its own level: use "…/#", not "…` + lvl + `"`
+		case strings.Contains(lvl, "+"):
+			return `"+" shares a level with other characters (in "` + lvl + `")`,
+				`give "+" its own level: use "…/+/…", not "…` + lvl + `…"`
+		}
+	}
+	return "", ""
 }
 
 // requiredPerm is one statically-known permission requirement and the literal

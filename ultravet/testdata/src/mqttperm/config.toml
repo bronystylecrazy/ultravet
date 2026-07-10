@@ -1,0 +1,9 @@
+[auth.roles]
+# Well-formed mqtt filter grants: NEVER flagged.
+device = ["mqtt.pub:telemetry/#", "mqtt.sub:cmd/+/reboot", "mqtt.pub:a//b"]
+# Broad grants are not filters: ignored.
+admin = ["*", "mqtt.*"]
+# Non-mqtt grant: ignored.
+ops = ["zones.read"]
+# Malformed mqtt filters: three diagnostics.
+buggy = ["mqtt.pub:sport/#/player", "mqtt.sub:sp+rt", "mqtt.pub:"]
