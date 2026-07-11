@@ -377,7 +377,7 @@ func classifyDep(t types.Type) (dep need, kernelGiven bool) {
 				// the documented DI0003 fix.
 				return need{Type: typeString(args.At(0)), Kind: needHard, Lazy: true}, false
 			}
-		case "Runner", "Key", "Keyed", "Family", "Scope":
+		case "Runner", "Key", "Keyed", "Family", "Scope", "Dependent":
 			return need{}, true // kernel-given / separately validated
 		}
 	}
