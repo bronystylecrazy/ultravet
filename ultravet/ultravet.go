@@ -135,7 +135,8 @@ func (f *regFuncsFact) String() string {
 }
 
 func run(pass *analysis.Pass) (any, error) {
-	x := &extractor{pass: pass, memo: map[types.Object]*regSummary{}, linted: map[*ast.FuncDecl]bool{}}
+	x := &extractor{pass: pass, memo: map[types.Object]*regSummary{},
+		varMemo: map[*types.Var]*regSummary{}, linted: map[*ast.FuncDecl]bool{}}
 
 	// 1. Summarize this package's exported registration-returning funcs
 	//    and export the fact for downstream packages.
@@ -181,8 +182,8 @@ func run(pass *analysis.Pass) (any, error) {
 }
 
 // isAssemblyRoot recognizes di.New / di.Validate / stack.Run / stack.New /
-// stack.Validate / cli.Main / cli.Test — the places a whole graph is
-// declared.
+// stack.Validate / cli.Run / cli.Main / cli.Test — the places a whole
+// graph is declared.
 func isAssemblyRoot(pass *analysis.Pass, call *ast.CallExpr) bool {
 	fn := calleeFunc(pass, call)
 	if fn == nil || fn.Pkg() == nil {
@@ -194,7 +195,7 @@ func isAssemblyRoot(pass *analysis.Pass, call *ast.CallExpr) bool {
 	case stackPath:
 		return fn.Name() == "Run" || fn.Name() == "New" || fn.Name() == "Validate"
 	case cliPath:
-		return fn.Name() == "Main" || fn.Name() == "Test"
+		return fn.Name() == "Run" || fn.Name() == "Main" || fn.Name() == "Test"
 	}
 	return false
 }

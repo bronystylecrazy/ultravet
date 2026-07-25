@@ -13,9 +13,10 @@ import (
 // extractor turns registration expressions into regSummaries, resolving
 // through local functions and imported-package facts.
 type extractor struct {
-	pass   *analysis.Pass
-	memo   map[types.Object]*regSummary
-	linted map[*ast.FuncDecl]bool
+	pass    *analysis.Pass
+	memo    map[types.Object]*regSummary
+	varMemo map[*types.Var]*regSummary
+	linted  map[*ast.FuncDecl]bool
 }
 
 // summarizeExpr resolves one registration-valued expression.
@@ -23,13 +24,112 @@ func (x *extractor) summarizeExpr(e ast.Expr) *regSummary {
 	switch e := ast.Unparen(e).(type) {
 	case *ast.CallExpr:
 		return x.summarizeCall(e)
-	case *ast.Ident, *ast.SelectorExpr:
-		// A registration held in a variable (regs...) or package var:
-		// not resolved in v1 — opaque, never guess.
+	case *ast.Ident:
+		// The canonical root form holds the assembly in a package-level
+		// var: cli.Run(App). Resolvable without guessing when every
+		// possible writer is in this package and there is exactly one.
+		if s := x.summarizeVar(e); s != nil {
+			return s
+		}
+		return &regSummary{Opaque: true}
+	case *ast.SelectorExpr:
+		// Another package's var: registration facts cover functions,
+		// not vars — opaque, never guess.
 		return &regSummary{Opaque: true}
 	default:
 		return &regSummary{Opaque: true}
 	}
+}
+
+// summarizeVar resolves a registration held in a package-level var of
+// THIS package. Sound without whole-program analysis because every
+// possible writer is visible to the pass: the var resolves only when its
+// declaration carries an initializer and nothing in the package
+// reassigns it or takes its address. Any doubt returns nil (opaque).
+func (x *extractor) summarizeVar(id *ast.Ident) *regSummary {
+	obj, ok := x.pass.TypesInfo.Uses[id].(*types.Var)
+	if !ok || obj.Pkg() != x.pass.Pkg {
+		return nil
+	}
+	// Package scope only: locals have dataflow we do not model.
+	if obj.Parent() != x.pass.Pkg.Scope() {
+		return nil
+	}
+	// The package-local writer scan below is sound only when no OTHER
+	// package can write the var: unexported, or any var in package main
+	// (importing package main is impossible — `var App` is this case).
+	if obj.Exported() && x.pass.Pkg.Name() != "main" {
+		return nil
+	}
+	if s, done := x.varMemo[obj]; done {
+		return s
+	}
+	x.varMemo[obj] = nil // recursion guard: a self-referential var stays opaque
+	init := x.varInit(obj)
+	if init == nil || x.varWritten(obj) {
+		return nil
+	}
+	s := x.summarizeExpr(init)
+	x.varMemo[obj] = s
+	return s
+}
+
+// varInit finds the single initializer expression of a package-level var
+// declaration — nil for tuple assignments (var a, b = f()) and bare
+// declarations.
+func (x *extractor) varInit(obj *types.Var) ast.Expr {
+	for _, file := range x.pass.Files {
+		for _, decl := range file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || len(vs.Names) != len(vs.Values) {
+					continue
+				}
+				for i, name := range vs.Names {
+					if x.pass.TypesInfo.Defs[name] == obj {
+						return vs.Values[i]
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// varWritten reports whether anything in the package reassigns the var or
+// takes its address — either one makes the initializer an unsafe answer.
+func (x *extractor) varWritten(obj *types.Var) bool {
+	written := false
+	for _, file := range x.pass.Files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.AssignStmt:
+				for _, lhs := range n.Lhs {
+					if id, ok := ast.Unparen(lhs).(*ast.Ident); ok &&
+						x.pass.TypesInfo.Uses[id] == obj {
+						written = true
+					}
+				}
+			case *ast.UnaryExpr:
+				if n.Op != token.AND {
+					return true
+				}
+				if id, ok := ast.Unparen(n.X).(*ast.Ident); ok &&
+					x.pass.TypesInfo.Uses[id] == obj {
+					written = true
+				}
+			}
+			return !written
+		})
+		if written {
+			return true
+		}
+	}
+	return false
 }
 
 // summarizeCall handles di.* combinators and registration-returning

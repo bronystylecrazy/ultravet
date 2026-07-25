@@ -47,3 +47,23 @@ func validated() {
 		di.Provide(NewDB), // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
 	)
 }
+
+// The canonical root form: the assembly held in a package-level var,
+// assigned exactly once — resolved through the var, checks intact.
+var appRegs = di.Options(
+	di.Provide(NewDB), // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
+)
+
+func varHeld() {
+	stack.Run(appRegs)
+}
+
+// A reassigned var has more than one possible value: opaque, never guess —
+// the broken graph inside must NOT be reported.
+var mutRegs = di.Options(di.Provide(NewServer))
+
+func mutate() { mutRegs = di.Options() }
+
+func mutatedHeld() {
+	stack.Run(mutRegs)
+}
