@@ -12,6 +12,7 @@ type Keyed[T any] struct{ m map[Key]T }
 type Family[S any] struct{ m map[Key]S }
 
 func New(regs ...Registration) (*App, error)                { return nil, nil }
+func Validate(regs ...Registration) error                   { return nil }
 func Provide(ctors ...any) Registration                     { return Registration{} }
 func Default(ctors ...any) Registration                     { return Registration{} }
 func Supply(values ...any) Registration                     { return Registration{} }

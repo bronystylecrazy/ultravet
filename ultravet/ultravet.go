@@ -180,7 +180,7 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
-// isAssemblyRoot recognizes di.New / stack.Run / stack.New /
+// isAssemblyRoot recognizes di.New / di.Validate / stack.Run / stack.New /
 // stack.Validate / cli.Main / cli.Test — the places a whole graph is
 // declared.
 func isAssemblyRoot(pass *analysis.Pass, call *ast.CallExpr) bool {
@@ -190,7 +190,7 @@ func isAssemblyRoot(pass *analysis.Pass, call *ast.CallExpr) bool {
 	}
 	switch fn.Pkg().Path() {
 	case diPath:
-		return fn.Name() == "New"
+		return fn.Name() == "New" || fn.Name() == "Validate"
 	case stackPath:
 		return fn.Name() == "Run" || fn.Name() == "New" || fn.Name() == "Validate"
 	case cliPath:

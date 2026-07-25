@@ -40,3 +40,10 @@ func ambiguous() {
 		di.Provide(NewConfig, NewConfig, NewDB), // want `error\[DI0004\]: 2 providers for \*basic.Config consumed bare by NewDB`
 	)
 }
+
+// di.Validate is the covenant's assembly root — same checks as di.New.
+func validated() {
+	_ = di.Validate(
+		di.Provide(NewDB), // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
+	)
+}
