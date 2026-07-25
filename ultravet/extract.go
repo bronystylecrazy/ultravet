@@ -202,16 +202,23 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 			}
 		}
 	case "Module", "Pkg":
+		// Module carries its name; Pkg is named after the calling package
+		// — which, during extraction, is the package under analysis (facts
+		// summarize a Pkg call in its declaring package's pass).
 		modName := "module"
-		if len(call.Args) > 0 {
+		regArgs := call.Args
+		if name == "Pkg" {
+			modName = x.pass.Pkg.Name()
+		} else if len(call.Args) > 0 {
 			if lit, ok := ast.Unparen(call.Args[0]).(*ast.BasicLit); ok {
 				modName = strings.Trim(lit.Value, `"`)
 			}
+			regArgs = call.Args[1:] // args[0] is the name
 		}
 		inner := &regSummary{}
 		exports := map[string]bool{}
 		hasExports := false
-		for _, arg := range call.Args[1:] { // args[0] is the name
+		for _, arg := range regArgs {
 			argCall, isCall := ast.Unparen(arg).(*ast.CallExpr)
 			if isCall {
 				if fn := calleeFunc(x.pass, argCall); fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == diPath {

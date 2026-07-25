@@ -18,7 +18,7 @@ func Default(ctors ...any) Registration                     { return Registratio
 func Supply(values ...any) Registration                     { return Registration{} }
 func Bind[I any](ctor any) Registration                     { return Registration{} }
 func Module(name string, regs ...Registration) Registration { return Registration{} }
-func Pkg(name string, regs ...Registration) Registration    { return Registration{} }
+func Pkg(regs ...Registration) Registration                 { return Registration{} }
 func Options(regs ...Registration) Registration             { return Registration{} }
 func Global(regs ...Registration) Registration              { return Registration{} }
 func Tolerate(regs ...Registration) Registration            { return Registration{} }
