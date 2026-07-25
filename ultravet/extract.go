@@ -3,6 +3,7 @@ package ultravet
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"strings"
 
@@ -200,6 +201,29 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 	return out
 }
 
+// paramRange maps the i-th parameter of a signature to its range in the
+// declaration's field list: the whole field (`cfg *Config`) normally, just
+// the name when one field declares several parameters (`a, b *Config`).
+// NoPos when the declaration is unknown (other package, method value).
+func paramRange(params *ast.FieldList, i int) (pos, end token.Pos) {
+	if params == nil {
+		return token.NoPos, token.NoPos
+	}
+	at := 0
+	for _, f := range params.List {
+		span := max(len(f.Names), 1) // an unnamed field is one parameter
+		if i < at+span {
+			if len(f.Names) > 1 {
+				name := f.Names[i-at]
+				return name.Pos(), name.End()
+			}
+			return f.Pos(), f.End()
+		}
+		at += span
+	}
+	return token.NoPos, token.NoPos
+}
+
 // resultTypes lists a constructor's non-error result type strings —
 // for pools whose needs we deliberately do not model (scoped, member).
 func (x *extractor) resultTypes(arg ast.Expr) []string {
@@ -294,6 +318,16 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 	if fn != nil {
 		ctor.Name = fn.Name()
 	}
+	// The declaration's parameter list, when it lives in this package —
+	// lets each need carry the exact parameter that created it.
+	var declParams *ast.FieldList
+	if lit, ok := ast.Unparen(arg).(*ast.FuncLit); ok {
+		declParams = lit.Type.Params
+	} else if fn != nil && fn.Pkg() == x.pass.Pkg {
+		if decl := x.localDecl(fn); decl != nil {
+			declParams = decl.Type.Params
+		}
+	}
 
 	res := sig.Results()
 	for i := 0; i < res.Len(); i++ {
@@ -326,6 +360,7 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 		// The registration argument itself is the reportable range: the
 		// `NewDB` in di.Provide(NewDB) — column-precise for this package.
 		dep.Pos, dep.End = arg.Pos(), arg.End()
+		dep.DeclPos, dep.DeclEnd = paramRange(declParams, i)
 		ctor.Needs = append(ctor.Needs, dep)
 	}
 	out.Ctors = append(out.Ctors, ctor)

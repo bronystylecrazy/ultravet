@@ -139,8 +139,15 @@ func TestLSPConversation(t *testing.T) {
 		!strings.Contains(d.Message, "no provider for *lspdemo.Config") {
 		t.Fatalf("diagnostic: %+v", d)
 	}
-	if len(d.Related) != 1 || !strings.Contains(d.Related[0].Message, "declared here") {
+	// The related span is the parameter that created the need — the
+	// `cfg *Config` in NewServer's signature on 0-based line 11, chars
+	// 15..26 — not the function name.
+	if len(d.Related) != 1 || !strings.Contains(d.Related[0].Message, "this parameter of NewServer") {
 		t.Fatalf("related span missing: %+v", d.Related)
+	}
+	if r := d.Related[0].Location.Range; r.Start.Line != 11 || r.Start.Character != 15 ||
+		r.End.Line != 11 || r.End.Character != 26 {
+		t.Fatalf("related range: %+v", r)
 	}
 	// The range is the argument at fault — the NewServer inside
 	// di.Provide(NewServer) on 0-based line 15, chars 13..22 — not the

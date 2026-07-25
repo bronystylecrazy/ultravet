@@ -83,6 +83,12 @@ type need struct {
 	// to other packages carry NoPos (a token.Pos never survives the trip).
 	Pos token.Pos
 	End token.Pos
+	// DeclPos/DeclEnd bound the parameter of the constructor's declaration
+	// that created this need (`cfg *Config` in NewDB's signature) — the
+	// "declared here" secondary lands on the parameter itself. Same
+	// pass-local rule as Pos/End; NoPos when the declaration is elsewhere.
+	DeclPos token.Pos
+	DeclEnd token.Pos
 }
 
 type needKind int
@@ -309,14 +315,29 @@ func needSpan(call *ast.CallExpr, n need) (pos, end token.Pos) {
 func (x *extractor) reportAt(call *ast.CallExpr, n need, msg string) {
 	pos, end := needSpan(call, n)
 	d := analysis.Diagnostic{Pos: pos, End: end, Message: msg}
+	d.Related = x.relatedDecl(n)
+	x.pass.Report(d)
+}
+
+// relatedDecl builds the "declared here" secondary for a need: the exact
+// parameter that created it when the declaration is in this package —
+// falling back to the constructor's name when only that is known.
+func (x *extractor) relatedDecl(n need) []analysis.RelatedInformation {
+	if n.DeclPos.IsValid() {
+		return []analysis.RelatedInformation{{
+			Pos:     n.DeclPos,
+			End:     n.DeclEnd,
+			Message: fmt.Sprintf("this parameter of %s created the need", n.By),
+		}}
+	}
 	if decl := x.declByName(n.By); decl != nil {
-		d.Related = append(d.Related, analysis.RelatedInformation{
+		return []analysis.RelatedInformation{{
 			Pos:     decl.Name.Pos(),
 			End:     decl.Name.End(),
 			Message: fmt.Sprintf("needed by %s, declared here", n.By),
-		})
+		}}
 	}
-	x.pass.Report(d)
+	return nil
 }
 
 // reportMissing emits DI0001 — with a one-click fix when an unregistered
@@ -330,14 +351,8 @@ func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
 			"error[DI0001]: no provider for %s (needed by %s) — add a di.Provide/Supply for it, or take di.Optional[%s]",
 			shortType(n.Type), n.By, shortType(n.Type)),
 	}
-	// Point at the consumer too — "needed by NewServer, declared here".
-	if decl := x.declByName(n.By); decl != nil {
-		d.Related = append(d.Related, analysis.RelatedInformation{
-			Pos:     decl.Name.Pos(),
-			End:     decl.Name.End(),
-			Message: fmt.Sprintf("needed by %s, declared here", n.By),
-		})
-	}
+	// Point at the consumer too — the parameter that created the need.
+	d.Related = x.relatedDecl(n)
 	if ctor, qual := x.findLocalConstructor(call, n.Type); ctor != "" {
 		d.SuggestedFixes = []analysis.SuggestedFix{{
 			Message: fmt.Sprintf("Register %s, which provides %s", ctor, shortType(n.Type)),
@@ -454,6 +469,7 @@ func stripPositions(s regSummary) regSummary {
 		copy(needs, ctors[i].Needs)
 		for j := range needs {
 			needs[j].Pos, needs[j].End = token.NoPos, token.NoPos
+			needs[j].DeclPos, needs[j].DeclEnd = token.NoPos, token.NoPos
 		}
 		ctors[i].Needs = needs
 	}
