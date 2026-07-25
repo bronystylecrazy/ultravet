@@ -16,7 +16,7 @@ type Family[S any] struct{ m map[Key]S }
 func New(regs ...Reg) (*App, error)       { return nil, nil }
 func Validate(regs ...Reg) error          { return nil }
 func Provide(ctors ...any) Reg            { return Reg{} }
-func Default(ctors ...any) Reg            { return Reg{} }
+func Default(regs ...Reg) Reg             { return Reg{} }
 func Supply(values ...any) Reg            { return Reg{} }
 func Bind[I any](ctor any) Reg            { return Reg{} }
 func Module(name string, regs ...Reg) Reg { return Reg{} }

@@ -173,13 +173,29 @@ func (x *extractor) summarizeCall(call *ast.CallExpr) *regSummary {
 func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary {
 	out := &regSummary{}
 	switch name {
-	case "Provide", "Default":
+	case "Provide":
 		for _, arg := range call.Args {
 			if x.provideOptionArg(out, arg) {
 				continue // di.As[...]() / di.NonCritical: not a constructor
 			}
 			x.addConstructor(out, arg)
 		}
+	case "Default":
+		// di.Default(regs ...Registration) wraps REGISTRATIONS, not
+		// constructors — it composes like Options and then stamps everything
+		// it wrapped as auto-configuration. Reading its arguments as
+		// constructors (as this case once did, sharing Provide's branch) is
+		// what made every real di.Default(di.Provide(...)) a bogus DI0010.
+		//
+		// The stamp is a re-derivation, not an append: a nested di.Default
+		// already recorded its types, and everything inside an outer Default
+		// is default anyway — so each provided type is counted exactly once.
+		inner := &regSummary{}
+		for _, arg := range call.Args {
+			merge(inner, x.summarizeExpr(arg))
+		}
+		inner.Defaults = inner.allProvides()
+		merge(out, inner)
 	case "Bind":
 		// di.Bind[Iface](ctor): provides the interface AND the concrete.
 		iface, haveIface := typeArg(x.pass, call)
