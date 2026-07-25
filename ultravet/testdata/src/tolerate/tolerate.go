@@ -46,9 +46,9 @@ func toleratedModuleResolves() {
 // is still reported (contents are not opaque). NewSidecar needs *Config,
 // which nothing provides here.
 func toleratedMissingStillReported() {
-	stack.Run( // want `error\[DI0001\]: no provider for \*tolerate.Config \(needed by NewSidecar\)`
+	stack.Run(
 		di.Tolerate(
-			di.Provide(NewSidecar),
+			di.Provide(NewSidecar), // want `error\[DI0001\]: no provider for \*tolerate.Config \(needed by NewSidecar\)`
 		),
 		di.Provide(NewServer),
 	)

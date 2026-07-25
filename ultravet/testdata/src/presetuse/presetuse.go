@@ -19,7 +19,7 @@ func crossPackageSatisfied() {
 }
 
 func crossPackageMissing() {
-	stack.Run( // want `error\[DI0001\]: no provider for \*presetlib.Pool \(needed by NewRepo\)`
-		di.Provide(NewRepo),
+	stack.Run(
+		di.Provide(NewRepo), // want `error\[DI0001\]: no provider for \*presetlib.Pool \(needed by NewRepo\)`
 	)
 }

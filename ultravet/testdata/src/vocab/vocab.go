@@ -47,8 +47,8 @@ func vocabSatisfied() {
 }
 
 func lazyStillRequired() {
-	stack.Run( // want `error\[DI0001\]: no provider for \*vocab.Mailer \(needed by NewServer\)`
-		di.Provide(NewRouteA, NewServer),
+	stack.Run(
+		di.Provide(NewRouteA, NewServer), // want `error\[DI0001\]: no provider for \*vocab.Mailer \(needed by NewServer\)`
 	)
 }
 

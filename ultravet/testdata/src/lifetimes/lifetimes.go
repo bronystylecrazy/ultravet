@@ -20,10 +20,10 @@ func NewFeed(k di.Key) *Feed { return &Feed{} }
 func NewServer(tx *Tx) *Server { return &Server{} }
 
 func captive() {
-	stack.Run( // want `error\[DI0101\]: NewServer \(singleton\) depends on \*lifetimes.Tx \(scoped\)`
+	stack.Run(
 		di.Provide(NewConfig),
 		di.Scoped(NewTx),
-		di.Provide(NewServer),
+		di.Provide(NewServer), // want `error\[DI0101\]: NewServer \(singleton\) depends on \*lifetimes.Tx \(scoped\)`
 	)
 }
 
@@ -42,9 +42,9 @@ func scopedCorrectly() {
 func NewRouter(f *Feed) *Router { return &Router{} }
 
 func memberOutside() {
-	stack.Run( // want `error\[DI0106\]: NewRouter consumes family member \*lifetimes.Feed directly`
+	stack.Run(
 		di.Members(NewFeed),
-		di.Provide(NewRouter),
+		di.Provide(NewRouter), // want `error\[DI0106\]: NewRouter consumes family member \*lifetimes.Feed directly`
 	)
 }
 

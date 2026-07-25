@@ -34,9 +34,9 @@ type Auditor struct{}
 func NewAuditor(cfg *Config) *Auditor { return &Auditor{} }
 
 func consumerBlockedByPrivacy() {
-	stack.Run( // want `error\[DI0005\]: \*privacy.Config is provided inside module "database" but not exported — NewAuditor cannot see it`
+	stack.Run(
 		dbModule(),
-		di.Provide(NewAuditor),
+		di.Provide(NewAuditor), // want `error\[DI0005\]: \*privacy.Config is provided inside module "database" but not exported — NewAuditor cannot see it`
 	)
 }
 

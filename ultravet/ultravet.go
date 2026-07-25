@@ -23,6 +23,7 @@ package ultravet
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"sort"
 	"strings"
@@ -76,6 +77,12 @@ type need struct {
 	Module string // the consumer's module: insiders see private types
 	Kind   needKind
 	Lazy   bool // di.Lazy: still required, but breaks cycles
+	// Pos/End bound the registration argument at fault (the constructor
+	// expression inside di.Provide/Bind/...) — column-precise reporting.
+	// Only meaningful within the pass that extracted them: facts exported
+	// to other packages carry NoPos (a token.Pos never survives the trip).
+	Pos token.Pos
+	End token.Pos
 }
 
 type needKind int
@@ -137,7 +144,10 @@ func run(pass *analysis.Pass) (any, error) {
 			if obj == nil || !returnsRegistration(obj) {
 				continue
 			}
-			fact.Funcs[fd.Name.Name] = *x.summarizeFunc(obj, fd)
+			// Positions are pass-local; strip them before the summary
+			// crosses the package boundary (importers fall back to their
+			// own assembly call site).
+			fact.Funcs[fd.Name.Name] = stripPositions(*x.summarizeFunc(obj, fd))
 		}
 	}
 	if len(fact.Funcs) > 0 {
@@ -261,9 +271,9 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 		case graphcheck.Missing:
 			x.reportMissing(call, n)
 		case graphcheck.Ambiguous:
-			x.pass.Reportf(call.Pos(),
+			x.reportAt(call, n, fmt.Sprintf(
 				"error[DI0004]: %d providers for %s consumed bare by %s — collect them with di.Many[%s], or remove the extras",
-				cands.Singleton, shortType(n.Type), n.By, shortType(n.Type))
+				cands.Singleton, shortType(n.Type), n.By, shortType(n.Type)))
 		case graphcheck.NotExported:
 			x.reportAt(call, n, fmt.Sprintf(
 				"error[DI0005]: %s is provided inside module %q but not exported — %s cannot see it; add di.Export[%s]() to that module",
@@ -282,13 +292,27 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	x.checkCycles(call, &total)
 }
 
-// reportAt emits a graph error with the consumer's declaration as a
-// related span — the rustc-style "declared here" secondary.
+// needSpan picks the report range for a need: the registration argument at
+// fault (column-precise, when the need was extracted from this package's
+// own source) — or the whole assembly call as the fallback for needs that
+// crossed a package boundary via a fact.
+func needSpan(call *ast.CallExpr, n need) (pos, end token.Pos) {
+	if n.Pos.IsValid() {
+		return n.Pos, n.End
+	}
+	return call.Pos(), token.NoPos
+}
+
+// reportAt emits a graph error at the offending registration argument,
+// with the consumer's declaration as a related span — the rustc-style
+// "declared here" secondary.
 func (x *extractor) reportAt(call *ast.CallExpr, n need, msg string) {
-	d := analysis.Diagnostic{Pos: call.Pos(), Message: msg}
+	pos, end := needSpan(call, n)
+	d := analysis.Diagnostic{Pos: pos, End: end, Message: msg}
 	if decl := x.declByName(n.By); decl != nil {
 		d.Related = append(d.Related, analysis.RelatedInformation{
 			Pos:     decl.Name.Pos(),
+			End:     decl.Name.End(),
 			Message: fmt.Sprintf("needed by %s, declared here", n.By),
 		})
 	}
@@ -298,8 +322,10 @@ func (x *extractor) reportAt(call *ast.CallExpr, n need, msg string) {
 // reportMissing emits DI0001 — with a one-click fix when an unregistered
 // constructor for the missing type exists in this package.
 func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
+	pos, end := needSpan(call, n)
 	d := analysis.Diagnostic{
-		Pos: call.Pos(),
+		Pos: pos,
+		End: end,
 		Message: fmt.Sprintf(
 			"error[DI0001]: no provider for %s (needed by %s) — add a di.Provide/Supply for it, or take di.Optional[%s]",
 			shortType(n.Type), n.By, shortType(n.Type)),
@@ -308,6 +334,7 @@ func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
 	if decl := x.declByName(n.By); decl != nil {
 		d.Related = append(d.Related, analysis.RelatedInformation{
 			Pos:     decl.Name.Pos(),
+			End:     decl.Name.End(),
 			Message: fmt.Sprintf("needed by %s, declared here", n.By),
 		})
 	}
@@ -414,6 +441,24 @@ var kernelGivens = []string{
 	diPath + ".Runner",
 	diPath + ".Key",
 	"*log/slog.Logger", // provided by stack.Base at every stack/cli root
+}
+
+// stripPositions deep-copies a summary with every need's Pos/End cleared —
+// facts are (de)serialized across packages, where a token.Pos from this
+// pass's FileSet would point at arbitrary code.
+func stripPositions(s regSummary) regSummary {
+	ctors := make([]ctorInfo, len(s.Ctors))
+	copy(ctors, s.Ctors)
+	for i := range ctors {
+		needs := make([]need, len(ctors[i].Needs))
+		copy(needs, ctors[i].Needs)
+		for j := range needs {
+			needs[j].Pos, needs[j].End = token.NoPos, token.NoPos
+		}
+		ctors[i].Needs = needs
+	}
+	s.Ctors = ctors
+	return s
 }
 
 func merge(dst *regSummary, src *regSummary) {

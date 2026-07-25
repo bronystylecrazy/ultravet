@@ -14,8 +14,8 @@ func NewServer(db *DB) *Server { return &Server{db: db} }
 func NewConfig() *Config       { return &Config{} }
 
 func missingProvider() {
-	stack.Run( // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
-		di.Provide(NewDB, NewServer),
+	stack.Run(
+		di.Provide(NewDB, NewServer), // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
 	)
 }
 
@@ -36,7 +36,7 @@ func viaModuleAndSupply() {
 }
 
 func ambiguous() {
-	_, _ = di.New( // want `error\[DI0004\]: 2 providers for \*basic.Config consumed bare by NewDB`
-		di.Provide(NewConfig, NewConfig, NewDB),
+	_, _ = di.New(
+		di.Provide(NewConfig, NewConfig, NewDB), // want `error\[DI0004\]: 2 providers for \*basic.Config consumed bare by NewDB`
 	)
 }

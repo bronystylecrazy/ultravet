@@ -13,7 +13,7 @@ func NewDB(cfg *Config) *DB { return &DB{} }
 
 func assemble() {
 	stack.Run(
-		di.Provide(NewConfig), // want `error\[DI0001\]: no provider for \*fix.Config \(needed by NewDB\)`
-		di.Provide(NewDB),
+		di.Provide(NewConfig),
+		di.Provide(NewDB), // want `error\[DI0001\]: no provider for \*fix.Config \(needed by NewDB\)`
 	)
 }

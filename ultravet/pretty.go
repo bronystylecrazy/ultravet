@@ -76,7 +76,20 @@ func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) st
 	pad := strings.Repeat(" ", gutter)
 	bar := paint(cBlue, pad+" |")
 
-	writeSpan := func(p token.Position, underlineColor, label string) {
+	// endColumn resolves an end token.Pos to a column on the same line as
+	// start (0 when unknown or spanning lines — the heuristic takes over).
+	endColumn := func(start token.Position, end token.Pos) int {
+		if !end.IsValid() {
+			return 0
+		}
+		ep := fset.Position(end)
+		if ep.Filename != start.Filename || ep.Line != start.Line || ep.Column <= start.Column {
+			return 0
+		}
+		return ep.Column
+	}
+
+	writeSpan := func(p token.Position, endCol int, underlineColor, label string) {
 		line, ok := sourceLine(p.Filename, p.Line)
 		if !ok {
 			return
@@ -86,6 +99,10 @@ func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) st
 		fmt.Fprintf(&b, "%s %s\n", paint(cBlue, num+" |"), strings.ReplaceAll(line, "\t", "    "))
 		col := visualCol(line, p.Column)
 		width := spanWidth(line, p.Column)
+		if endCol > p.Column {
+			// The analyzer knows the exact range: underline it verbatim.
+			width = visualCol(line, endCol) - col
+		}
 		marker := strings.Repeat(" ", col-1) + strings.Repeat("^", width)
 		if label != "" {
 			marker += " " + label
@@ -93,9 +110,10 @@ func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) st
 		fmt.Fprintf(&b, "%s %s\n", bar, paint(underlineColor, marker))
 	}
 
-	writeSpan(pos, sevColor, "")
+	writeSpan(pos, endColumn(pos, d.End), sevColor, "")
 	for _, rel := range d.Related {
-		writeSpan(fset.Position(rel.Pos), cBlue, rel.Message)
+		rp := fset.Position(rel.Pos)
+		writeSpan(rp, endColumn(rp, rel.End), cBlue, rel.Message)
 	}
 
 	if help != "" {

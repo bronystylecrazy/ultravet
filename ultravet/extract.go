@@ -235,9 +235,11 @@ func (x *extractor) checkImplements(arg ast.Expr, ifaceT types.Type) {
 	if m, _ := types.MissingMethod(concrete, iface, true); m != nil {
 		detail = fmt.Sprintf(" — missing method %s", m.Name())
 	}
-	x.pass.Reportf(arg.Pos(),
-		"error[DI0007]: %s does not implement %s%s",
-		typeString(concrete), shortType(typeString(ifaceT)), detail)
+	x.pass.Report(analysis.Diagnostic{
+		Pos: arg.Pos(), End: arg.End(),
+		Message: fmt.Sprintf("error[DI0007]: %s does not implement %s%s",
+			typeString(concrete), shortType(typeString(ifaceT)), detail),
+	})
 }
 
 // provideOptionArg reports whether arg is a ProvideOption VALUE mixed into a
@@ -278,9 +280,12 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 	sig, ok := t.(*types.Signature)
 	if !ok {
 		// DI0010 at the offending argument: values are Supply's job.
-		x.pass.Reportf(arg.Pos(),
-			"error[DI0010]: di.Provide takes constructor functions, got %s — for a ready value use di.Supply",
-			typeString(x.pass.TypesInfo.TypeOf(ast.Unparen(arg))))
+		x.pass.Report(analysis.Diagnostic{
+			Pos: arg.Pos(), End: arg.End(),
+			Message: fmt.Sprintf(
+				"error[DI0010]: di.Provide takes constructor functions, got %s — for a ready value use di.Supply",
+				typeString(x.pass.TypesInfo.TypeOf(ast.Unparen(arg)))),
+		})
 		out.Opaque = true
 		return
 	}
@@ -299,9 +304,12 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 		ctor.Provides = append(ctor.Provides, typeString(rt))
 	}
 	if len(ctor.Provides) == 0 {
-		x.pass.Reportf(arg.Pos(),
-			"error[DI0010]: constructor %s returns nothing to provide — a constructor must return at least one non-error value",
-			ctor.Name)
+		x.pass.Report(analysis.Diagnostic{
+			Pos: arg.Pos(), End: arg.End(),
+			Message: fmt.Sprintf(
+				"error[DI0010]: constructor %s returns nothing to provide — a constructor must return at least one non-error value",
+				ctor.Name),
+		})
 	}
 
 	params := sig.Params()
@@ -315,6 +323,9 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 			continue
 		}
 		dep.By = ctor.Name
+		// The registration argument itself is the reportable range: the
+		// `NewDB` in di.Provide(NewDB) — column-precise for this package.
+		dep.Pos, dep.End = arg.Pos(), arg.End()
 		ctor.Needs = append(ctor.Needs, dep)
 	}
 	out.Ctors = append(out.Ctors, ctor)

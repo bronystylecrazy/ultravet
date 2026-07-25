@@ -142,7 +142,11 @@ func TestLSPConversation(t *testing.T) {
 	if len(d.Related) != 1 || !strings.Contains(d.Related[0].Message, "declared here") {
 		t.Fatalf("related span missing: %+v", d.Related)
 	}
-	if d.Range.Start.Line != 14 { // stack.Run( — 0-based line 14
+	// The range is the argument at fault — the NewServer inside
+	// di.Provide(NewServer) on 0-based line 15, chars 13..22 — not the
+	// whole stack.Run( line.
+	if d.Range.Start.Line != 15 || d.Range.Start.Character != 13 ||
+		d.Range.End.Line != 15 || d.Range.End.Character != 22 {
 		t.Fatalf("range: %+v", d.Range)
 	}
 
