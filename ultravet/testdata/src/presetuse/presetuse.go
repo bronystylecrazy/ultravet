@@ -23,3 +23,24 @@ func crossPackageMissing() {
 		di.Provide(NewRepo), // want `error\[DI0001\]: no provider for \*presetlib.Pool \(needed by NewRepo\)`
 	)
 }
+
+type Pages struct{}
+
+func NewPages(c *presetlib.Cache) *Pages { return &Pages{} }
+func NewRedisCache() *presetlib.Cache    { return &presetlib.Cache{} }
+
+// The preset's di.Default crossed the package boundary as a fact: the
+// product's own *Cache overrides it instead of colliding with it.
+func overridesPresetDefault() {
+	stack.Run(
+		presetlib.DefaultCache(),
+		di.Provide(NewRedisCache, NewPages),
+	)
+}
+
+func presetDefaultAlone() {
+	stack.Run(
+		presetlib.DefaultCache(),
+		di.Provide(NewPages),
+	)
+}

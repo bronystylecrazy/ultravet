@@ -55,6 +55,12 @@ type regSummary struct {
 	Member   []string      // provided per-Spawn by di.Members ctors
 	Private  []privateType // provided inside an exporting module, unexported
 	Opaque   bool          // something was not statically resolvable
+	// Defaults is the multiset of types provided from inside a di.Default
+	// registration — a SUBSET of allProvides(), not extra providers. It is
+	// what lets candidateCount model the kernel's back-off (see
+	// di/resolve.go filterDefaults). Kept as counts, not a set, because two
+	// defaults for one type stay ambiguous exactly as they do at runtime.
+	Defaults []string
 }
 
 // privateType is a type trapped behind module privacy (DI0005).
@@ -220,6 +226,10 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	for _, p := range total.allProvides() {
 		provided[p]++
 	}
+	defaults := map[string]int{}
+	for _, p := range total.Defaults {
+		defaults[p]++
+	}
 	for _, k := range kernelGivens {
 		provided[k]++
 	}
@@ -247,7 +257,7 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 		} else if n.Lazy {
 			kind = graphcheck.Lazy
 		}
-		cands := graphcheck.Candidates{Singleton: provided[n.Type]}
+		cands := graphcheck.Candidates{Singleton: candidateCount(provided, defaults, n.Type)}
 		if mod, trapped := private[n.Type]; trapped {
 			if mod == n.Module {
 				cands.Singleton++ // insiders see their module's private types
@@ -296,6 +306,27 @@ func (x *extractor) checkAssembly(call *ast.CallExpr) {
 	}
 
 	x.checkCycles(call, &total)
+}
+
+// candidateCount is di.Default's back-off, statically: the number of
+// providers of t that actually reach resolution.
+//
+// It mirrors the kernel's filterDefaults (di/resolve.go) exactly — wherever
+// a type has BOTH default and non-default providers, the defaults drop out
+// and only the real ones are candidates; a type provided only by defaults
+// keeps every one of them, so two defaults for one type stay DI0004 just as
+// they do at runtime ("Default never introduces last-wins semantics between
+// real registrations" — di.Default's doc).
+//
+// Without this, a preset's di.Default(...) plus the product's own provider
+// counted as two candidates and the analyzer reported an ambiguity the
+// runtime does not have.
+func candidateCount(provided, defaults map[string]int, t string) int {
+	n, d := provided[t], defaults[t]
+	if d > 0 && n > d {
+		return n - d // real providers exist: the defaults back off
+	}
+	return n // only defaults (or none): they resolve normally
 }
 
 // needSpan picks the report range for a need: the registration argument at
@@ -450,7 +481,19 @@ func (x *extractor) findLocalConstructor(call *ast.CallExpr, typ string) (ctor, 
 	return "", ""
 }
 
-// kernelGivens are types the runtime injects without registration.
+// kernelGivens are types the runtime injects without registration. They
+// count as ordinary (non-default) providers — NOT as di.Default
+// registrations that back off — because that is what the kernel does:
+//
+//   - *di.App, di.Runner and di.Key are injected by the resolver itself and
+//     have no registration to override.
+//   - *slog.Logger is stack.Base's `di.Provide(newLogger)` (stack/stack.go),
+//     a plain provider, so a product that also supplies a *slog.Logger has
+//     two providers and stack.Validate reports DI0004. The swappable seam is
+//     one level down — Base registers the slog.Handler as di.Default, and
+//     THAT is what a product or preset (contrib/zlog) overrides. Modeling
+//     the logger as a default here would silence a real boot failure, so it
+//     deliberately stays a plain given; see testdata/src/defaults.
 var kernelGivens = []string{
 	"*" + diPath + ".App",
 	diPath + ".Runner",
@@ -483,6 +526,7 @@ func merge(dst *regSummary, src *regSummary) {
 	dst.Scoped = append(dst.Scoped, src.Scoped...)
 	dst.Member = append(dst.Member, src.Member...)
 	dst.Private = append(dst.Private, src.Private...)
+	dst.Defaults = append(dst.Defaults, src.Defaults...)
 	dst.Opaque = dst.Opaque || src.Opaque
 }
 
