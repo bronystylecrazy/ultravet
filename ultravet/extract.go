@@ -644,9 +644,11 @@ func returnsRegistrationSlice(fn *types.Func) bool {
 }
 
 func isRegistrationType(t types.Type) bool {
-	named, ok := t.(*types.Named)
+	// Unalias first: di.Registration is an alias of di.Reg, and modern Go
+	// materializes aliases as their own type nodes.
+	named, ok := types.Unalias(t).(*types.Named)
 	return ok && named.Obj().Pkg() != nil &&
-		named.Obj().Pkg().Path() == diPath && named.Obj().Name() == "Registration"
+		named.Obj().Pkg().Path() == diPath && named.Obj().Name() == "Reg"
 }
 
 func isErrorType(t types.Type) bool {

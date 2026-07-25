@@ -1,7 +1,9 @@
 // Stub of the di kernel: signatures only, for analysis tests.
 package di
 
-type Registration struct{ x any }
+type Reg struct{ x any }
+
+type Registration = Reg
 type App struct{}
 type Runner interface{ Go(any) }
 type Key string
@@ -11,24 +13,24 @@ type Lazy[T any] struct{ f func() T }
 type Keyed[T any] struct{ m map[Key]T }
 type Family[S any] struct{ m map[Key]S }
 
-func New(regs ...Registration) (*App, error)                { return nil, nil }
-func Validate(regs ...Registration) error                   { return nil }
-func Provide(ctors ...any) Registration                     { return Registration{} }
-func Default(ctors ...any) Registration                     { return Registration{} }
-func Supply(values ...any) Registration                     { return Registration{} }
-func Bind[I any](ctor any) Registration                     { return Registration{} }
-func Module(name string, regs ...Registration) Registration { return Registration{} }
-func Pkg(regs ...Registration) Registration                 { return Registration{} }
-func Options(regs ...Registration) Registration             { return Registration{} }
-func Global(regs ...Registration) Registration              { return Registration{} }
-func Tolerate(regs ...Registration) Registration            { return Registration{} }
-func Export[T any]() Registration                           { return Registration{} }
-func Decorate(fns ...any) Registration                      { return Registration{} }
-func OnDemand() Registration                                { return Registration{} }
+func New(regs ...Reg) (*App, error)       { return nil, nil }
+func Validate(regs ...Reg) error          { return nil }
+func Provide(ctors ...any) Reg            { return Reg{} }
+func Default(ctors ...any) Reg            { return Reg{} }
+func Supply(values ...any) Reg            { return Reg{} }
+func Bind[I any](ctor any) Reg            { return Reg{} }
+func Module(name string, regs ...Reg) Reg { return Reg{} }
+func Pkg(regs ...Reg) Reg                 { return Reg{} }
+func Options(regs ...Reg) Reg             { return Reg{} }
+func Global(regs ...Reg) Reg              { return Reg{} }
+func Tolerate(regs ...Reg) Reg            { return Reg{} }
+func Export[T any]() Reg                  { return Reg{} }
+func Decorate(fns ...any) Reg             { return Reg{} }
+func OnDemand() Reg                       { return Reg{} }
 
-func Scoped(ctors ...any) Registration           { return Registration{} }
-func PerKey(keys any, ctors ...any) Registration { return Registration{} }
-func Members(ctors ...any) Registration          { return Registration{} }
+func Scoped(ctors ...any) Reg           { return Reg{} }
+func PerKey(keys any, ctors ...any) Reg { return Reg{} }
+func Members(ctors ...any) Reg          { return Reg{} }
 
 type Scope[S any] struct{ s *S }
 
