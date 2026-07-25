@@ -25,6 +25,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -35,7 +37,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants — before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names — before boot)",
 	Run:       run,
 	FactTypes: []analysis.Fact{new(regFuncsFact)},
 }
@@ -184,7 +186,42 @@ func run(pass *analysis.Pass) (any, error) {
 
 	// 3. UV0002: required permissions vs. the product's configured roles.
 	x.checkPermissions()
+
+	// 4. UV0003: layer-prefixed file names — the closed-set doctrine.
+	checkFileNames(pass)
 	return nil, nil
+}
+
+// layerPrefixed matches the banned file shapes: handler_*.go / service_*.go
+// are horizontal layering smuggled back through names. The doctrine's
+// closed set is <pkg>.go, handler.go, types.go, deps.go, errors.go plus
+// plain-noun files; a file that outgrows a page splits the PACKAGE.
+var layerPrefixed = regexp.MustCompile(`^(handler|service)_.+\.go$`)
+
+// checkFileNames emits UV0003 for layer-prefixed file names — only in
+// packages on the platform (importing ultrastack), so foreign code in the
+// same build is never policed.
+func checkFileNames(pass *analysis.Pass) {
+	onPlatform := false
+	for _, imp := range pass.Pkg.Imports() {
+		if strings.HasPrefix(imp.Path(), "github.com/bronystylecrazy/ultrastack") {
+			onPlatform = true
+			break
+		}
+	}
+	if !onPlatform {
+		return
+	}
+	for _, file := range pass.Files {
+		pos := pass.Fset.Position(file.Pos())
+		base := filepath.Base(pos.Filename)
+		if !layerPrefixed.MatchString(base) {
+			continue
+		}
+		pass.Reportf(file.Pos(),
+			"warning[UV0003]: %s is a layer-prefixed file — split the domain into its own package, not the file into shards (the closed set: <pkg>.go, handler.go, types.go, deps.go, errors.go, plus plain-noun files)",
+			base)
+	}
 }
 
 // isAssemblyRoot recognizes di.New / di.Validate / stack.Run / stack.New /
