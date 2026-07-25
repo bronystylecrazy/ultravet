@@ -201,7 +201,7 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 				out.Provides = append(out.Provides, typeString(t))
 			}
 		}
-	case "Module":
+	case "Module", "Pkg":
 		modName := "module"
 		if len(call.Args) > 0 {
 			if lit, ok := ast.Unparen(call.Args[0]).(*ast.BasicLit); ok {

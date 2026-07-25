@@ -58,6 +58,15 @@ func varHeld() {
 	stack.Run(appRegs)
 }
 
+// di.Pkg is the canonical name for di.Module — same grouping, same checks
+// (this want proves Pkg resolves rather than falling to opaque).
+func pkgGrouped() {
+	stack.Run(
+		di.Pkg("db", di.Provide(NewDB)), // want `error\[DI0001\]: no provider for \*basic.Config \(needed by NewDB\)`
+		di.Provide(NewServer),
+	)
+}
+
 // A reassigned var has more than one possible value: opaque, never guess —
 // the broken graph inside must NOT be reported.
 var mutRegs = di.Options(di.Provide(NewServer))
