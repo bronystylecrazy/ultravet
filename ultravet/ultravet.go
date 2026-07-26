@@ -37,7 +37,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names — before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names, UV0004 feature importing feature, UV0005 infra importing app, UV0006 util importing internal — before boot)",
 	Run:       run,
 	FactTypes: []analysis.Fact{new(regFuncsFact)},
 }
@@ -189,6 +189,9 @@ func run(pass *analysis.Pass) (any, error) {
 
 	// 4. UV0003: layer-prefixed file names — the closed-set doctrine.
 	checkFileNames(pass)
+
+	// 5. UV0004/UV0005/UV0006: the product tree's illegal import edges.
+	checkDoctrine(pass)
 	return nil, nil
 }
 
@@ -204,7 +207,7 @@ var layerPrefixed = regexp.MustCompile(`^(handler|service)_.+\.go$`)
 func checkFileNames(pass *analysis.Pass) {
 	onPlatform := false
 	for _, imp := range pass.Pkg.Imports() {
-		if strings.HasPrefix(imp.Path(), "github.com/bronystylecrazy/ultrastack") {
+		if strings.HasPrefix(imp.Path(), ultrastackPath) {
 			onPlatform = true
 			break
 		}
