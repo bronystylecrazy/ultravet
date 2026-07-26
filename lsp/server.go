@@ -207,11 +207,15 @@ func (s *Server) analyze(path string) {
 		for _, d := range act.Diagnostics {
 			uri, ld := toLSP(fset, d)
 			diags[uri] = append(diags[uri], ld)
-			for _, fix := range d.SuggestedFixes {
+			// One fixable predicate, one fix: ultravet.PrimaryFix is what
+			// `ultravet -fix` applies and what the JSON report calls
+			// `fix` — the lightbulb offers exactly that edit set, never a
+			// second implementation of it.
+			if fix, ok := ultravet.PrimaryFix(d); ok {
 				fixes[uri] = append(fixes[uri], fixEntry{
 					title: fix.Message,
 					diag:  ld,
-					edit:  toWorkspaceEdit(fset, uri, fix),
+					edit:  toWorkspaceEdit(fset, fix),
 				})
 			}
 		}
@@ -263,17 +267,13 @@ func toLSP(fset *token.FileSet, d analysis.Diagnostic) (uri string, out lspDiagn
 	if d.End.IsValid() {
 		end = fset.Position(d.End)
 	}
-	sev, code := 1, ""
-	msg := d.Message
-	if m := strings.SplitN(msg, "]: ", 2); len(m) == 2 && strings.Contains(m[0], "[") {
-		head := m[0]
-		if strings.HasPrefix(head, "warning") {
-			sev = 2
-		}
-		if i := strings.Index(head, "["); i >= 0 {
-			code = head[i+1:]
-		}
-		msg = m[1]
+	// One head parser for the whole framework (analyzer/ultravet): the
+	// severity the editor paints is the severity the report and the CI
+	// annotation use.
+	severity, code, msg := ultravet.SplitHead(d.Message)
+	sev := 1
+	if severity == "warning" {
+		sev = 2
 	}
 	out = lspDiagnostic{
 		Range:    lspRange{Start: toPos(pos), End: toPos(end)},
@@ -297,20 +297,24 @@ func toLSP(fset *token.FileSet, d analysis.Diagnostic) (uri string, out lspDiagn
 	return pathToURI(pos.Filename), out
 }
 
-func toWorkspaceEdit(fset *token.FileSet, uri string, fix analysis.SuggestedFix) workspaceEdit {
-	var edits []textEdit
+// toWorkspaceEdit turns a SuggestedFix into the LSP edit. Each text edit is
+// filed under ITS OWN document — a fix is free to touch a second file, and
+// stapling every edit onto the diagnostic's URI would corrupt it.
+func toWorkspaceEdit(fset *token.FileSet, fix analysis.SuggestedFix) workspaceEdit {
+	changes := map[string][]textEdit{}
 	for _, e := range fix.TextEdits {
-		p := toPos(fset.Position(e.Pos))
+		p := fset.Position(e.Pos)
 		q := p
 		if e.End.IsValid() && e.End != e.Pos {
-			q = toPos(fset.Position(e.End))
+			q = fset.Position(e.End)
 		}
-		edits = append(edits, textEdit{
-			Range:   lspRange{Start: p, End: q},
+		uri := pathToURI(p.Filename)
+		changes[uri] = append(changes[uri], textEdit{
+			Range:   lspRange{Start: toPos(p), End: toPos(q)},
 			NewText: string(e.NewText),
 		})
 	}
-	return workspaceEdit{Changes: map[string][]textEdit{uri: edits}}
+	return workspaceEdit{Changes: changes}
 }
 
 func toPos(p token.Position) position {

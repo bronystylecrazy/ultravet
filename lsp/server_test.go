@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -109,12 +110,23 @@ func TestLSPConversation(t *testing.T) {
 	go func() { done <- srv.Run() }()
 	c := &client{t: t, in: bufio.NewReader(clientIn), out: clientOut}
 
-	// initialize → capabilities advertise diagnostics + quickfix.
+	// initialize → capabilities advertise diagnostics + the quickfix kind, so
+	// the client asks for code actions at all.
 	c.send("initialize", map[string]any{"rootUri": "file://" + dir}, true)
 	init := c.recv()
 	raw, _ := json.Marshal(init.Result)
-	if !strings.Contains(string(raw), "codeActionProvider") {
-		t.Fatalf("capabilities: %s", raw)
+	var caps struct {
+		Capabilities struct {
+			CodeActionProvider struct {
+				CodeActionKinds []string `json:"codeActionKinds"`
+			} `json:"codeActionProvider"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &caps); err != nil {
+		t.Fatalf("capabilities: %v\n%s", err, raw)
+	}
+	if got := caps.Capabilities.CodeActionProvider.CodeActionKinds; len(got) != 1 || got[0] != "quickfix" {
+		t.Fatalf("codeActionProvider must advertise quickfix, got %v\n%s", got, raw)
 	}
 	c.send("initialized", map[string]any{}, false)
 
@@ -157,16 +169,43 @@ func TestLSPConversation(t *testing.T) {
 		t.Fatalf("range: %+v", d.Range)
 	}
 
-	// codeAction over the diagnostic returns the Register-NewConfig edit.
+	// codeAction over the diagnostic returns the Register-NewConfig quick-fix,
+	// carrying the SuggestedFix's TextEdits verbatim as a WorkspaceEdit — the
+	// SAME edit `ultravet -fix` writes, resolved through ultravet.PrimaryFix.
 	c.send("textDocument/codeAction", map[string]any{
 		"textDocument": map[string]any{"uri": mainURI},
 		"range":        d.Range,
 	}, true)
 	act := c.recv()
 	raw, _ = json.Marshal(act.Result)
-	if !strings.Contains(string(raw), "Register NewConfig") ||
-		!strings.Contains(string(raw), "di.Provide(NewConfig)") {
-		t.Fatalf("code action: %s", raw)
+	var actions []codeAction
+	if err := json.Unmarshal(raw, &actions); err != nil {
+		t.Fatalf("code action: %v\n%s", err, raw)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("want exactly one quick-fix, got %d: %s", len(actions), raw)
+	}
+	a := actions[0]
+	if a.Kind != "quickfix" || a.Title != "ultravet: Register NewConfig, which provides *lspdemo.Config" {
+		t.Errorf("action head: kind=%q title=%q", a.Kind, a.Title)
+	}
+	if len(a.Diagnostics) != 1 || a.Diagnostics[0].Code != "DI0001" {
+		t.Errorf("the action must name the diagnostic it fixes: %+v", a.Diagnostics)
+	}
+	// The golden edit: an insertion just inside stack.Run( (0-based line 14,
+	// char 11), adding the registration line at the argument list's own
+	// indentation. Byte-for-byte what the fix carries — the LSP transports it,
+	// it does not re-derive it.
+	edits, ok := a.Edit.Changes[mainURI]
+	if !ok || len(a.Edit.Changes) != 1 {
+		t.Fatalf("the edit must target exactly the diagnostic's file: %+v", a.Edit.Changes)
+	}
+	want := []textEdit{{
+		Range:   lspRange{Start: position{Line: 14, Character: 11}, End: position{Line: 14, Character: 11}},
+		NewText: "\n\t\tdi.Provide(NewConfig),",
+	}}
+	if !reflect.DeepEqual(edits, want) {
+		t.Fatalf("workspace edit:\n got %+v\nwant %+v", edits, want)
 	}
 
 	// Fix the file on disk, save → diagnostics clear.

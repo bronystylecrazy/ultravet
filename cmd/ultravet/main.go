@@ -1,13 +1,24 @@
-// ultravet is the ultrastack static analyzer. Run standalone for the
-// rustc-style rendering, with -fix to apply the machine-safe edits the report
-// marks [fixable]; -json and `go vet -vettool` dispatch to the standard flat
-// driver; -diagjson emits ultrastack-structured findings.
+// ultravet is the ultrastack static analyzer.
+//
+//	ultravet ./...                    rustc-style report (the default)
+//	ultravet -fix ./...               apply the edits marked [fixable]
+//	ultravet -format json ./...       the structured finding document
+//	ultravet -format github ./...     GitHub Actions annotations
+//
+// -format github is selected AUTOMATICALLY when GITHUB_ACTIONS=true and no
+// -format was given, so a workflow that runs the analyzer annotates the pull
+// request with zero configuration. -fix suppresses the auto-selection (its
+// output is a rewrite log, not an annotation stream) and is an error when a
+// machine format is asked for explicitly.
+//
+// -json, -flags, -V and a unit .cfg belong to the `go vet -vettool` protocol
+// and dispatch to the standard flat driver — gopls speaks it, so the name is
+// not ours to reuse; the structured document rides -format json instead.
+// -diagjson is the retired spelling of -format json, kept working.
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"go/token"
 	"os"
 	"sort"
 	"strings"
@@ -20,6 +31,15 @@ import (
 	"github.com/bronystylecrazy/ultrastack/analyzer/ultravet"
 )
 
+// output formats. human is the rustc-style report; json and github are the
+// machine serializations, both marshaled by analyzer/ultravet's one Finding
+// mapping so they cannot drift from each other or from the mcp tool.
+const (
+	formatHuman  = "human"
+	formatJSON   = "json"
+	formatGitHub = "github"
+)
+
 func main() {
 	args := os.Args[1:]
 	for _, a := range args {
@@ -30,48 +50,164 @@ func main() {
 			singlechecker.Main(ultravet.Analyzer)
 			return
 		}
-		// -diagjson is ultravet's own structured emitter (see diagJSON): the
-		// go/analysis flat driver has no place for our codes, related spans,
-		// and fixes, so this is a separate path from -json (kept for gopls).
-		if a == "-diagjson" || a == "--diagjson" {
-			os.Exit(diagJSON(withoutFlag(args, "-diagjson", "--diagjson")))
-		}
+	}
+
+	format, fix, patterns, err := parseArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ultravet:", err)
+		os.Exit(2)
+	}
+	if len(patterns) == 0 {
+		patterns = []string{"./..."}
+	}
+	switch format {
+	case formatJSON:
+		os.Exit(reportJSON(patterns))
+	case formatGitHub:
+		os.Exit(reportGitHub(patterns))
 	}
 	// -fix stays on THIS driver rather than singlechecker's: handing it over
 	// would trade the rustc-style report for the flat one, and the report is
 	// what tells you which findings -fix could touch.
-	fix := false
-	for _, a := range args {
-		if a == "-fix" || a == "--fix" {
-			fix = true
-		}
-	}
-	patterns := withoutFlag(args, "-fix", "--fix")
-	if len(patterns) == 0 {
-		patterns = []string{"./..."}
-	}
 	os.Exit(pretty(patterns, fix))
 }
 
-// withoutFlag drops the named flags from args, leaving the load patterns.
-func withoutFlag(args []string, flags ...string) []string {
-	drop := map[string]bool{}
-	for _, f := range flags {
-		drop[f] = true
-	}
-	out := args[:0:0]
-	for _, a := range args {
-		if !drop[a] {
-			out = append(out, a)
+// parseArgs splits the command line into the output format, the -fix flag and
+// the load patterns. -format accepts both spellings (-format=json and -format
+// json) and both dash counts; an unrecognized flag is left for the pattern
+// list, where packages.Load reports it far better than we could.
+func parseArgs(args []string) (format string, fix bool, patterns []string, err error) {
+	explicit := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-fix" || a == "--fix":
+			fix = true
+		case a == "-diagjson" || a == "--diagjson": // the retired spelling
+			format, explicit = formatJSON, true
+		case a == "-format" || a == "--format":
+			if i+1 >= len(args) {
+				return "", false, nil, fmt.Errorf("-format needs a value (%s|%s|%s)", formatHuman, formatJSON, formatGitHub)
+			}
+			i++
+			format, explicit = args[i], true
+		case strings.HasPrefix(a, "-format=") || strings.HasPrefix(a, "--format="):
+			_, v, _ := strings.Cut(a, "=")
+			format, explicit = v, true
+		default:
+			patterns = append(patterns, a)
 		}
 	}
-	return out
+	switch format {
+	case "", formatHuman, formatJSON, formatGitHub:
+	default:
+		return "", false, nil, fmt.Errorf("unknown -format %q (want %s, %s or %s)", format, formatHuman, formatJSON, formatGitHub)
+	}
+	if explicit && fix && format != formatHuman {
+		return "", false, nil, fmt.Errorf("-fix rewrites files and reports what changed; it cannot also emit -format %s", format)
+	}
+	if !explicit {
+		format = autoFormat(fix)
+	}
+	return format, fix, patterns, nil
+}
+
+// autoFormat is the zero-config CI behaviour: inside GitHub Actions, findings
+// become annotations on the pull request without anyone passing a flag. A -fix
+// run opts out — it is rewriting the checkout, and its summary is prose.
+func autoFormat(fix bool) string {
+	if !fix && os.Getenv("GITHUB_ACTIONS") == "true" {
+		return formatGitHub
+	}
+	return formatHuman
+}
+
+// load runs the analyzer over patterns, returning the result graph or a
+// non-zero exit code (2) after reporting why it could not.
+func load(patterns []string) (*checker.Graph, int) {
+	cfg := &packages.Config{Mode: packages.LoadAllSyntax}
+	pkgs, err := packages.Load(cfg, patterns...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, 2
+	}
+	if packages.PrintErrors(pkgs) > 0 {
+		return nil, 2
+	}
+	graph, err := checker.Analyze([]*analysis.Analyzer{ultravet.Analyzer}, pkgs, nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return nil, 2
+	}
+	return graph, 0
 }
 
 // diagKey identifies a diagnostic across the duplicate actions a package with
 // tests produces — position plus message, the same identity -fix uses.
 func diagKey(act *checker.Action, d analysis.Diagnostic) string {
 	return act.Package.Fset.Position(d.Pos).String() + d.Message
+}
+
+// collect turns the run into the canonical, deduplicated, sorted finding list.
+// Both machine formats start here — there is one traversal, one mapping, one
+// order, so `--json` and `--format github` always describe the same findings.
+func collect(graph *checker.Graph) []ultravet.Finding {
+	out := []ultravet.Finding{}
+	seen := map[string]bool{}
+	for _, act := range graph.Roots {
+		fset := act.Package.Fset
+		for _, d := range act.Diagnostics {
+			key := diagKey(act, d)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, ultravet.NewFinding(fset, d))
+		}
+	}
+	ultravet.SortFindings(out)
+	return out
+}
+
+// reportJSON prints the structured finding document. Exit codes match every
+// other format: 1 with findings, 0 clean, 2 on a load error.
+func reportJSON(patterns []string) int {
+	graph, code := load(patterns)
+	if graph == nil {
+		return code
+	}
+	findings := collect(graph)
+	os.Stdout.Write(ultravet.MarshalFindings(findings))
+	return exitFor(len(findings))
+}
+
+// reportGitHub prints GitHub Actions workflow commands — one annotation per
+// finding, landing inline on the pull request's diff.
+func reportGitHub(patterns []string) int {
+	graph, code := load(patterns)
+	if graph == nil {
+		return code
+	}
+	findings := collect(graph)
+	ultravet.WriteGitHubAnnotations(os.Stdout, findings, workspaceRoot())
+	return exitFor(len(findings))
+}
+
+func exitFor(findings int) int {
+	if findings > 0 {
+		return 1
+	}
+	return 0
+}
+
+// workspaceRoot is what GitHub resolves annotation paths against: the checkout
+// root the runner exports, or the working directory outside Actions.
+func workspaceRoot() string {
+	if w := os.Getenv("GITHUB_WORKSPACE"); w != "" {
+		return w
+	}
+	wd, _ := os.Getwd()
+	return wd
 }
 
 // pretty renders findings rustc-style. With fix set, the machine-safe ones are
@@ -82,19 +218,9 @@ func diagKey(act *checker.Action, d analysis.Diagnostic) string {
 // when clean, 2 on a load error. -fix changes the files, not the verdict: the
 // run that repaired them still reports that they needed repairing.
 func pretty(patterns []string, fix bool) int {
-	cfg := &packages.Config{Mode: packages.LoadAllSyntax}
-	pkgs, err := packages.Load(cfg, patterns...)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	if packages.PrintErrors(pkgs) > 0 {
-		return 2
-	}
-	graph, err := checker.Analyze([]*analysis.Analyzer{ultravet.Analyzer}, pkgs, nil)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
+	graph, code := load(patterns)
+	if graph == nil {
+		return code
 	}
 
 	type finding struct {
@@ -183,140 +309,4 @@ func plural(n int, noun string) string {
 func isTTY() bool {
 	fi, err := os.Stdout.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
-
-// ---- -diagjson: ultrastack-structured findings ----
-
-// diagFinding is one wiring diagnostic in the structured shape agents and
-// IDEs consume — the same data RenderDiagnostic draws, minus the drawing.
-type diagFinding struct {
-	Code         string            `json:"code"`    // "DI0001", "UV0002", "" if unparsable
-	Message      string            `json:"message"` // full one-line message (code prefix included)
-	File         string            `json:"file"`
-	Line         int               `json:"line"`
-	Col          int               `json:"col"`
-	Related      []diagRelated     `json:"related,omitempty"`
-	SuggestedFix *diagSuggestedFix `json:"suggestedFix,omitempty"`
-}
-
-type diagRelated struct {
-	File    string `json:"file"`
-	Line    int    `json:"line"`
-	Col     int    `json:"col"`
-	Message string `json:"message"`
-}
-
-type diagSuggestedFix struct {
-	Message string         `json:"message"`
-	Edits   []diagTextEdit `json:"edits,omitempty"`
-}
-
-type diagTextEdit struct {
-	File    string `json:"file"`
-	Line    int    `json:"line"`
-	Col     int    `json:"col"`
-	EndLine int    `json:"endLine"`
-	EndCol  int    `json:"endCol"`
-	NewText string `json:"newText"`
-}
-
-// diagJSON runs the analyzer and prints its findings as a JSON array on
-// stdout — always an array (even empty), so callers can detect support by
-// parsing the output. Exit 1 with findings, 0 clean, 2 on a load error.
-func diagJSON(patterns []string) int {
-	if len(patterns) == 0 {
-		patterns = []string{"./..."}
-	}
-	cfg := &packages.Config{Mode: packages.LoadAllSyntax}
-	pkgs, err := packages.Load(cfg, patterns...)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	if packages.PrintErrors(pkgs) > 0 {
-		return 2
-	}
-	graph, err := checker.Analyze([]*analysis.Analyzer{ultravet.Analyzer}, pkgs, nil)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-
-	findings := []diagFinding{} // non-nil: marshals to [] when empty
-	seen := map[string]bool{}
-	for _, act := range graph.Roots {
-		fset := act.Package.Fset
-		for _, d := range act.Diagnostics {
-			pos := fset.Position(d.Pos)
-			key := pos.String() + d.Message
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			findings = append(findings, toDiagFinding(fset, d))
-		}
-	}
-	sort.Slice(findings, func(i, j int) bool {
-		a, b := findings[i], findings[j]
-		if a.File != b.File {
-			return a.File < b.File
-		}
-		if a.Line != b.Line {
-			return a.Line < b.Line
-		}
-		return a.Col < b.Col
-	})
-
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	enc.Encode(findings)
-	if len(findings) > 0 {
-		return 1
-	}
-	return 0
-}
-
-// toDiagFinding flattens a go/analysis diagnostic into the structured shape.
-func toDiagFinding(fset *token.FileSet, d analysis.Diagnostic) diagFinding {
-	pos := fset.Position(d.Pos)
-	f := diagFinding{
-		Code:    diagCode(d.Message),
-		Message: d.Message,
-		File:    pos.Filename,
-		Line:    pos.Line,
-		Col:     pos.Column,
-	}
-	for _, r := range d.Related {
-		rp := fset.Position(r.Pos)
-		f.Related = append(f.Related, diagRelated{
-			File: rp.Filename, Line: rp.Line, Col: rp.Column, Message: r.Message,
-		})
-	}
-	if len(d.SuggestedFixes) > 0 {
-		sf := d.SuggestedFixes[0] // the primary fix; the message names the rest
-		fix := &diagSuggestedFix{Message: sf.Message}
-		for _, e := range sf.TextEdits {
-			ep, eend := fset.Position(e.Pos), fset.Position(e.End)
-			fix.Edits = append(fix.Edits, diagTextEdit{
-				File: ep.Filename, Line: ep.Line, Col: ep.Column,
-				EndLine: eend.Line, EndCol: eend.Column, NewText: string(e.NewText),
-			})
-		}
-		f.SuggestedFix = fix
-	}
-	return f
-}
-
-// diagCode extracts the bracketed code from a message like
-// "error[DI0001]: …" or "warning[UV0002]: …"; "" when there is none.
-func diagCode(msg string) string {
-	i := strings.IndexByte(msg, '[')
-	if i < 0 {
-		return ""
-	}
-	j := strings.IndexByte(msg[i:], ']')
-	if j < 0 {
-		return ""
-	}
-	return msg[i+1 : i+j]
 }

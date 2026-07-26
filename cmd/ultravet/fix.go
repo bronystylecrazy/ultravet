@@ -48,7 +48,7 @@ type fixReport struct {
 	errs  []error
 }
 
-// applyFixes rewrites files with the first suggested fix of every diagnostic
+// applyFixes rewrites files with the primary suggested fix of every diagnostic
 // that carries one. It is the caller's job to render diagnostics BEFORE
 // calling this: the renderer quotes source lines from disk, which this moves.
 func applyFixes(graph *checker.Graph, key func(*checker.Action, analysis.Diagnostic) string) fixReport {
@@ -63,7 +63,10 @@ func applyFixes(graph *checker.Graph, key func(*checker.Action, analysis.Diagnos
 	for _, act := range graph.Roots {
 		fset := act.Package.Fset
 		for _, d := range act.Diagnostics {
-			if !ultravet.Fixable(d) {
+			// ultravet.PrimaryFix is THE fixable predicate — the same call the
+			// [fixable] tag, the JSON `fix` object and the LSP quick-fix make.
+			fix, fixable := ultravet.PrimaryFix(d)
+			if !fixable {
 				continue
 			}
 			k := key(act, d)
@@ -73,7 +76,7 @@ func applyFixes(graph *checker.Graph, key func(*checker.Action, analysis.Diagnos
 			seen[k] = true
 			p := pendingFix{key: k, edits: map[string][]fileEdit{}}
 			ok := true
-			for _, e := range d.SuggestedFixes[0].TextEdits {
+			for _, e := range fix.TextEdits {
 				f := fset.File(e.Pos)
 				if f == nil {
 					ok = false
