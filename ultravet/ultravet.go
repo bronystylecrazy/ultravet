@@ -409,8 +409,8 @@ func (x *extractor) relatedDecl(n need) []analysis.RelatedInformation {
 	return nil
 }
 
-// reportMissing emits DI0001 — with a one-click fix when an unregistered
-// constructor for the missing type exists in this package.
+// reportMissing emits DI0001 — with a one-click fix when exactly one
+// unregistered constructor for the missing type exists in this package.
 func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
 	pos, end := needSpan(call, n)
 	d := analysis.Diagnostic{
@@ -423,15 +423,50 @@ func (x *extractor) reportMissing(call *ast.CallExpr, n need) {
 	// Point at the consumer too — the parameter that created the need.
 	d.Related = x.relatedDecl(n)
 	if ctor, qual := x.findLocalConstructor(call, n.Type); ctor != "" {
+		lead, tail := x.argIndent(call)
 		d.SuggestedFixes = []analysis.SuggestedFix{{
 			Message: fmt.Sprintf("Register %s, which provides %s", ctor, shortType(n.Type)),
 			TextEdits: []analysis.TextEdit{{
 				Pos: call.Lparen + 1, End: call.Lparen + 1,
-				NewText: []byte(fmt.Sprintf("\n\t\t%s.Provide(%s),", qual, ctor)),
+				NewText: []byte(fmt.Sprintf("%s%s.Provide(%s),%s", lead, qual, ctor, tail)),
 			}},
 		}}
 	}
 	x.pass.Report(d)
+}
+
+// argIndent picks the whitespace that makes an inserted registration line up
+// with the assembly's existing arguments: a new line at the first argument's
+// own indentation when the list is spread over lines, a single space when the
+// whole call is on one line. gofmt would repair either, but -fix writes files
+// people read in a diff — the edit should land already formatted.
+func (x *extractor) argIndent(call *ast.CallExpr) (lead, tail string) {
+	if len(call.Args) == 0 {
+		return "\n\t", ""
+	}
+	lp := x.pass.Fset.Position(call.Lparen)
+	first := x.pass.Fset.Position(call.Args[0].Pos())
+	if lp.Filename != first.Filename || first.Line == lp.Line {
+		return "", " " // one-liner: di.New(di.Provide(NewConfig), di.Provide(NewDB))
+	}
+	indent := "\t\t"
+	if x.pass.ReadFile != nil {
+		if src, err := x.pass.ReadFile(first.Filename); err == nil {
+			if line, ok := nthLine(src, first.Line); ok {
+				indent = line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			}
+		}
+	}
+	return "\n" + indent, ""
+}
+
+// nthLine returns the 1-based nth line of src, without its terminator.
+func nthLine(src []byte, n int) (string, bool) {
+	lines := strings.Split(string(src), "\n")
+	if n < 1 || n > len(lines) {
+		return "", false
+	}
+	return lines[n-1], true
 }
 
 // checkCycles finds hard dependency cycles among the assembly's
@@ -474,6 +509,12 @@ func (x *extractor) declByName(name string) *ast.FuncDecl {
 // findLocalConstructor looks for an unregistered function in this package
 // returning the missing type, and the di import qualifier of the file
 // containing the assembly.
+//
+// It answers only when the candidate is UNIQUE. Two functions returning the
+// missing type is a choice — registering the wrong one compiles and boots the
+// wrong graph — so the diagnostic stays advisory rather than let -fix guess.
+// Generic constructors are skipped for the same reason: they need type
+// arguments no edit can invent.
 func (x *extractor) findLocalConstructor(call *ast.CallExpr, typ string) (ctor, qualifier string) {
 	var file *ast.File
 	for _, f := range x.pass.Files {
@@ -498,6 +539,7 @@ func (x *extractor) findLocalConstructor(call *ast.CallExpr, typ string) (ctor, 
 	if qual == "" {
 		return "", "" // di not imported here: no safe textual fix
 	}
+	found := ""
 	for _, f := range x.pass.Files {
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
@@ -509,14 +551,24 @@ func (x *extractor) findLocalConstructor(call *ast.CallExpr, typ string) (ctor, 
 				continue
 			}
 			sig := fn.Type().(*types.Signature)
+			if sig.TypeParams().Len() > 0 {
+				continue // di.Provide(Generic) does not compile without type args
+			}
 			for i := 0; i < sig.Results().Len(); i++ {
-				if typeString(sig.Results().At(i).Type()) == typ {
-					return fd.Name.Name, qual
+				if typeString(sig.Results().At(i).Type()) != typ {
+					continue
 				}
+				if found != "" && found != fd.Name.Name {
+					return "", "" // ambiguous: no machine-safe answer
+				}
+				found = fd.Name.Name
 			}
 		}
 	}
-	return "", ""
+	if found == "" {
+		return "", ""
+	}
+	return found, qual
 }
 
 // kernelGivens are types the runtime injects without registration. They

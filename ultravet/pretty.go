@@ -39,6 +39,18 @@ const (
 
 var headRe = regexp.MustCompile(`^(error|warning)\[([A-Z]+[0-9]+)\]: (.*)$`)
 
+// Fixable reports whether a diagnostic carries a machine-applicable edit.
+// The [fixable] tag, the "fix:" help line and `ultravet -fix` all agree on
+// exactly this predicate — the report's coverage claim IS what -fix does.
+func Fixable(d analysis.Diagnostic) bool {
+	for _, f := range d.SuggestedFixes {
+		if len(f.TextEdits) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // RenderDiagnostic renders one diagnostic rustc-style. color toggles ANSI.
 func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) string {
 	paint := func(c, s string) string {
@@ -67,7 +79,13 @@ func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) st
 	if code != "" {
 		head = fmt.Sprintf("%s[%s]", sev, code)
 	}
-	fmt.Fprintf(&b, "%s%s %s\n", paint(sevColor, head+":"), "", paint(cBold, msg))
+	// [fixable] is the coverage marker: -fix rewrites exactly these findings,
+	// and only these. Everything else is advisory — a lesson, not an edit.
+	tag := ""
+	if Fixable(d) {
+		tag = paint(cDim, " [fixable]")
+	}
+	fmt.Fprintf(&b, "%s%s %s%s\n", paint(sevColor, head+":"), "", paint(cBold, msg), tag)
 
 	pos := fset.Position(d.Pos)
 	fmt.Fprintf(&b, "  %s %s\n", paint(cBlue, "-->"), pos)
@@ -120,6 +138,9 @@ func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) st
 		fmt.Fprintf(&b, "%s\n  %s %s\n", bar, paint(cBold, "help:"), help)
 	}
 	for _, fix := range d.SuggestedFixes {
+		if len(fix.TextEdits) == 0 {
+			continue
+		}
 		fmt.Fprintf(&b, "  %s %s (ultravet -fix applies it)\n", paint(cBold, "fix:"), fix.Message)
 	}
 	if strings.HasPrefix(code, "DI") {

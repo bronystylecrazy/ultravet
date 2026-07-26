@@ -16,3 +16,8 @@ func assemble() {
 		di.Provide(NewDB), // want `error\[DI0001\]: no provider for \*fix.Config \(needed by NewDB\)`
 	)
 }
+
+// The one-line assembly: the same fix lands inline, not on a new line.
+func inline() {
+	stack.Run(di.Provide(NewDB)) // want `error\[DI0001\]: no provider for \*fix.Config \(needed by NewDB\)`
+}

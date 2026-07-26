@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,4 +90,117 @@ func TestDiagCode(t *testing.T) {
 			t.Errorf("diagCode(%q) = %q, want %q", msg, got, want)
 		}
 	}
+}
+
+// TestFixRewritesFiles is the end-to-end covenant of -fix: over a COPY of the
+// testdata GOPATH it rewrites the fixable findings on disk, leaves the advisory
+// ones alone, and reports honestly what it did.
+func TestFixRewritesFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the analyzer binary")
+	}
+	src, err := filepath.Abs(filepath.Join("..", "..", "ultravet", "testdata"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gopath := filepath.Join(t.TempDir(), "gopath")
+	if err := copyTree(src, gopath); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "ultravet")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build ultravet: %v\n%s", err, out)
+	}
+
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), "GOPATH="+gopath, "GO111MODULE=off")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			if _, ok := err.(*exec.ExitError); !ok {
+				t.Fatalf("run ultravet %v: %v\nstderr: %s", args, err, stderr.String())
+			}
+		}
+		return stdout.String()
+	}
+
+	// A plain run names the fixable subset and touches nothing.
+	fixFile := filepath.Join(gopath, "src", "fix", "fix.go")
+	before, err := os.ReadFile(fixFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := run("fix")
+	if !strings.Contains(report, "[fixable]") {
+		t.Errorf("report must mark fixable findings:\n%s", report)
+	}
+	if !strings.Contains(report, "2 fixable — re-run with -fix to apply") {
+		t.Errorf("report must count the fixable findings:\n%s", report)
+	}
+	if now, _ := os.ReadFile(fixFile); !bytes.Equal(now, before) {
+		t.Fatal("a run without -fix must not write files")
+	}
+
+	// -fix repairs both DI0001s, to the byte the golden file expects.
+	out := run("-fix", "fix")
+	after, err := os.ReadFile(fixFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden, err := os.ReadFile(filepath.Join(src, "src", "fix", "fix.go.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(golden) {
+		t.Errorf("-fix did not reproduce the golden file:\n--- got ---\n%s\n--- want ---\n%s", after, golden)
+	}
+	if !strings.Contains(out, "fixed 2 issues in 1 file") {
+		t.Errorf("summary must report what changed on disk:\n%s", out)
+	}
+	if !strings.Contains(out, "0 findings remaining") {
+		t.Errorf("summary must report what is left:\n%s", out)
+	}
+
+	// The DI0010 rename lands too.
+	supply := filepath.Join(gopath, "src", "supplyfix", "supplyfix.go")
+	run("-fix", "supplyfix")
+	if b, _ := os.ReadFile(supply); !strings.Contains(string(b), "di.Supply(&Config{") {
+		t.Errorf("DI0010 fix did not rename Provide to Supply:\n%s", b)
+	}
+
+	// An advisory-only package (UV0001) is reported, never rewritten.
+	dialFile := filepath.Join(gopath, "src", "dial", "dial.go")
+	dialBefore, _ := os.ReadFile(dialFile)
+	dialOut := run("-fix", "dial")
+	if b, _ := os.ReadFile(dialFile); !bytes.Equal(b, dialBefore) {
+		t.Error("UV0001 is advisory: -fix must not rewrite the file")
+	}
+	if !strings.Contains(dialOut, "fixed 0 issues in 0 files") {
+		t.Errorf("an advisory-only run must say it fixed nothing:\n%s", dialOut)
+	}
+}
+
+// copyTree copies a directory tree (files only) so a -fix run can rewrite it
+// without disturbing the checked-in fixtures.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o644)
+	})
 }

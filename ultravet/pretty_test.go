@@ -24,10 +24,13 @@ func TestRenderDiagnosticRustStyle(t *testing.T) {
 	related := f.LineStart(3) + token.Pos(5)
 
 	out := RenderDiagnostic(fset, analysis.Diagnostic{
-		Pos:            primary,
-		Message:        "error[DI0001]: no provider for *p.Config (needed by NewServer) — add a di.Provide/Supply for it",
-		Related:        []analysis.RelatedInformation{{Pos: related, Message: "needed by NewServer, declared here"}},
-		SuggestedFixes: []analysis.SuggestedFix{{Message: "Register NewConfig"}},
+		Pos:     primary,
+		Message: "error[DI0001]: no provider for *p.Config (needed by NewServer) — add a di.Provide/Supply for it",
+		Related: []analysis.RelatedInformation{{Pos: related, Message: "needed by NewServer, declared here"}},
+		SuggestedFixes: []analysis.SuggestedFix{{
+			Message:   "Register NewConfig",
+			TextEdits: []analysis.TextEdit{{Pos: primary, End: primary, NewText: []byte("x")}},
+		}},
 	}, false)
 
 	for _, want := range []string{
@@ -39,10 +42,23 @@ func TestRenderDiagnosticRustStyle(t *testing.T) {
 		"needed by NewServer, declared here",
 		"help: add a di.Provide/Supply for it",
 		"fix: Register NewConfig",
+		"[fixable]",
 		"more: ultra explain DI0001",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing %q:\n%s", want, out)
+		}
+	}
+
+	// An advisory finding carries no tag and no fix line: the marker is a
+	// promise about -fix, so it must never appear without an edit behind it.
+	advisory := RenderDiagnostic(fset, analysis.Diagnostic{
+		Pos:     primary,
+		Message: "warning[UV0001]: constructor NewServer calls net.Dial — connect in Start(ctx)",
+	}, false)
+	for _, unwanted := range []string{"[fixable]", "fix:"} {
+		if strings.Contains(advisory, unwanted) {
+			t.Errorf("advisory finding must not claim %q:\n%s", unwanted, advisory)
 		}
 	}
 }
