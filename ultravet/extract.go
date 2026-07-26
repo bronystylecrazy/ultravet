@@ -178,7 +178,7 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 			if x.provideOptionArg(out, arg) {
 				continue // di.As[...]() / di.NonCritical: not a constructor
 			}
-			x.addConstructor(out, arg)
+			x.addConstructor(out, arg, call, name)
 		}
 	case "Default":
 		// di.Default(regs ...Registration) wraps REGISTRATIONS, not
@@ -206,7 +206,7 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 			if x.provideOptionArg(out, arg) {
 				continue // Bind forwards trailing ProvideOptions to Provide
 			}
-			x.addConstructor(out, arg)
+			x.addConstructor(out, arg, call, name)
 			if haveIface {
 				x.checkImplements(arg, iface)
 			}
@@ -421,18 +421,24 @@ func isProvideOptionType(t types.Type) bool {
 }
 
 // addConstructor records a constructor's provides and needs, and lints
-// its body for network calls (constructors never dial).
-func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
+// its body for network calls (constructors never dial). site is the
+// enclosing di.Provide/di.Bind call and siteName its function name — the
+// DI0010 fix is a rewrite OF that call, not of the argument.
+func (x *extractor) addConstructor(out *regSummary, arg ast.Expr, site *ast.CallExpr, siteName string) {
 	t := x.pass.TypesInfo.TypeOf(ast.Unparen(arg))
 	sig, ok := t.(*types.Signature)
 	if !ok {
 		// DI0010 at the offending argument: values are Supply's job.
-		x.pass.Report(analysis.Diagnostic{
+		d := analysis.Diagnostic{
 			Pos: arg.Pos(), End: arg.End(),
 			Message: fmt.Sprintf(
 				"error[DI0010]: di.Provide takes constructor functions, got %s — for a ready value use di.Supply",
 				typeString(x.pass.TypesInfo.TypeOf(ast.Unparen(arg)))),
-		})
+		}
+		if fix, ok := supplyFix(site, siteName, arg); ok {
+			d.SuggestedFixes = []analysis.SuggestedFix{fix}
+		}
+		x.pass.Report(d)
 		out.Opaque = true
 		return
 	}
@@ -493,6 +499,40 @@ func (x *extractor) addConstructor(out *regSummary, arg ast.Expr) {
 			x.lintCtorBody(ctor.Name, decl)
 		}
 	}
+}
+
+// supplyFix turns di.Provide(value) into di.Supply(value) — the exact edit
+// DI0010's message prescribes, and a purely mechanical one: Supply takes the
+// same variadic values and registers them ready-made, so the rename is the
+// whole change.
+//
+// It is offered ONLY when the offending value is the call's single argument.
+// A Provide that mixes constructors with a value has to be SPLIT (which
+// argument goes where is a judgement), and rewriting di.Bind[I](value) to
+// Supply would silently drop the I facet — neither is a rename, so neither
+// gets a fix. A forwarded slice (di.Provide(vals...)) is skipped for the same
+// reason: the elements, not the slice, are what Supply would take.
+func supplyFix(site *ast.CallExpr, siteName string, arg ast.Expr) (analysis.SuggestedFix, bool) {
+	if site == nil || siteName != "Provide" || site.Ellipsis.IsValid() ||
+		len(site.Args) != 1 || site.Args[0] != arg {
+		return analysis.SuggestedFix{}, false
+	}
+	var id *ast.Ident
+	switch fn := ast.Unparen(site.Fun).(type) {
+	case *ast.SelectorExpr:
+		id = fn.Sel
+	case *ast.Ident:
+		id = fn // dot-imported di
+	}
+	if id == nil || id.Name != "Provide" {
+		return analysis.SuggestedFix{}, false
+	}
+	return analysis.SuggestedFix{
+		Message: "Register the ready value with di.Supply",
+		TextEdits: []analysis.TextEdit{{
+			Pos: id.Pos(), End: id.End(), NewText: []byte("Supply"),
+		}},
+	}, true
 }
 
 // dialers are calls a constructor must not make — connection belongs in

@@ -1,0 +1,16 @@
+package supplyfix
+
+import (
+	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/ultrastack/stack"
+)
+
+type Config struct{ Addr string }
+
+// di.Provide of a ready value is DI0010, and its fix is a pure rename: di.Supply
+// takes exactly the same argument and registers it as-is.
+func assemble() {
+	stack.Run(
+		di.Supply(&Config{Addr: ":8080"}), // want `error\[DI0010\]: di.Provide takes constructor functions, got \*supplyfix.Config`
+	)
+}

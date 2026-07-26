@@ -1,6 +1,7 @@
 // ultravet is the ultrastack static analyzer. Run standalone for the
-// rustc-style rendering; -fix/-json and `go vet -vettool` dispatch to the
-// standard flat drivers; -diagjson emits ultrastack-structured findings.
+// rustc-style rendering, with -fix to apply the machine-safe edits the report
+// marks [fixable]; -json and `go vet -vettool` dispatch to the standard flat
+// driver; -diagjson emits ultrastack-structured findings.
 package main
 
 import (
@@ -22,9 +23,10 @@ import (
 func main() {
 	args := os.Args[1:]
 	for _, a := range args {
-		// go vet -vettool protocol, -fix application, or -json output:
-		// the standard driver handles all three.
-		if strings.HasSuffix(a, ".cfg") || a == "-fix" || a == "-json" || a == "--fix" || a == "--json" {
+		// The `go vet -vettool` protocol (-V=full, -flags, a unit .cfg) and
+		// -json output are the standard flat driver's job.
+		if strings.HasSuffix(a, ".cfg") || a == "-json" || a == "--json" ||
+			a == "-flags" || a == "--flags" || strings.HasPrefix(a, "-V") {
 			singlechecker.Main(ultravet.Analyzer)
 			return
 		}
@@ -35,10 +37,20 @@ func main() {
 			os.Exit(diagJSON(withoutFlag(args, "-diagjson", "--diagjson")))
 		}
 	}
-	if len(args) == 0 {
-		args = []string{"./..."}
+	// -fix stays on THIS driver rather than singlechecker's: handing it over
+	// would trade the rustc-style report for the flat one, and the report is
+	// what tells you which findings -fix could touch.
+	fix := false
+	for _, a := range args {
+		if a == "-fix" || a == "--fix" {
+			fix = true
+		}
 	}
-	os.Exit(pretty(args))
+	patterns := withoutFlag(args, "-fix", "--fix")
+	if len(patterns) == 0 {
+		patterns = []string{"./..."}
+	}
+	os.Exit(pretty(patterns, fix))
 }
 
 // withoutFlag drops the named flags from args, leaving the load patterns.
@@ -56,7 +68,20 @@ func withoutFlag(args []string, flags ...string) []string {
 	return out
 }
 
-func pretty(patterns []string) int {
+// diagKey identifies a diagnostic across the duplicate actions a package with
+// tests produces — position plus message, the same identity -fix uses.
+func diagKey(act *checker.Action, d analysis.Diagnostic) string {
+	return act.Package.Fset.Position(d.Pos).String() + d.Message
+}
+
+// pretty renders findings rustc-style. With fix set, the machine-safe ones are
+// applied to the files first and then omitted from the report, which ends with
+// what changed on disk.
+//
+// Exit codes are the same either way — 1 whenever the source had findings, 0
+// when clean, 2 on a load error. -fix changes the files, not the verdict: the
+// run that repaired them still reports that they needed repairing.
+func pretty(patterns []string, fix bool) int {
 	cfg := &packages.Config{Mode: packages.LoadAllSyntax}
 	pkgs, err := packages.Load(cfg, patterns...)
 	if err != nil {
@@ -73,42 +98,86 @@ func pretty(patterns []string) int {
 	}
 
 	type finding struct {
-		pos  string
-		text string
+		pos     string
+		key     string
+		text    string
+		fixable bool
 	}
 	var findings []finding
 	color := isTTY() && os.Getenv("NO_COLOR") == ""
+	fixable := 0
 	seen := map[string]bool{}
+	// Render BEFORE any rewrite: the renderer quotes source lines from disk,
+	// and applying a fix moves them.
 	for _, act := range graph.Roots {
 		for _, d := range act.Diagnostics {
-			pos := act.Package.Fset.Position(d.Pos).String()
-			key := pos + d.Message
+			key := diagKey(act, d)
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			findings = append(findings, finding{
-				pos:  pos,
-				text: ultravet.RenderDiagnostic(act.Package.Fset, d, color),
-			})
+			f := finding{
+				pos:     act.Package.Fset.Position(d.Pos).String(),
+				key:     key,
+				text:    ultravet.RenderDiagnostic(act.Package.Fset, d, color),
+				fixable: ultravet.Fixable(d),
+			}
+			if f.fixable {
+				fixable++
+			}
+			findings = append(findings, f)
 		}
 	}
 	if len(findings) == 0 {
+		if fix {
+			fmt.Println("ultravet: nothing to fix")
+		}
 		return 0
 	}
+
+	rep := fixReport{fixed: map[string]bool{}}
+	if fix {
+		rep = applyFixes(graph, diagKey)
+		for _, err := range rep.errs {
+			fmt.Fprintf(os.Stderr, "ultravet -fix: %v\n", err)
+		}
+	}
+
 	sort.Slice(findings, func(i, j int) bool { return findings[i].pos < findings[j].pos })
-	for i, f := range findings {
-		if i > 0 {
+	printed := 0
+	for _, f := range findings {
+		if rep.fixed[f.key] {
+			continue // repaired on disk; reporting it again would be noise
+		}
+		if printed > 0 {
 			fmt.Println()
 		}
 		fmt.Print(f.text)
+		printed++
 	}
-	plural := ""
-	if len(findings) > 1 {
-		plural = "s"
+	if printed > 0 {
+		fmt.Println()
 	}
-	fmt.Printf("\nultravet: %d finding%s\n", len(findings), plural)
+	if fix {
+		fmt.Printf("ultravet: fixed %s in %s; %s remaining\n",
+			plural(len(rep.fixed), "issue"), plural(rep.files, "file"),
+			plural(printed, "finding"))
+		return 1
+	}
+	fmt.Printf("ultravet: %s", plural(printed, "finding"))
+	if fixable > 0 {
+		fmt.Printf(" (%d fixable — re-run with -fix to apply)", fixable)
+	}
+	fmt.Println()
 	return 1
+}
+
+// plural renders "1 finding" / "3 findings".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func isTTY() bool {
