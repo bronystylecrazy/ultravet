@@ -18,11 +18,15 @@ import (
 // authPath is the contrib/auth import path — the home of Require/RequireAny.
 const authPath = "github.com/bronystylecrazy/ultrastack/contrib/auth"
 
+// apiPath is the contrib/api import path — the home of the Require route option.
+const apiPath = "github.com/bronystylecrazy/ultrastack/contrib/api"
+
 // checkPermissions is the UV0002 pass. It statically collects the permission
 // strings a package requires — stack.Route.Require literals (composite-literal
-// fields and `rt.Require = "..."` assignments) and auth.Require/RequireAny
-// string-literal arguments — and verifies each is granted by some role in the
-// product's config.toml [auth.roles] map.
+// fields and `rt.Require = "..."` assignments), auth.Require/RequireAny
+// string-literal arguments, and api.Require route-option string-literal
+// arguments — and verifies each is granted by some role in the product's
+// config.toml [auth.roles] map.
 //
 // Honesty is the constraint, exactly like the wiring checks: the lint is
 // SILENT unless a config.toml with an [auth.roles] section is discoverable
@@ -231,7 +235,8 @@ func (x *extractor) collectRequired() []requiredPerm {
 				}
 			case *ast.CallExpr:
 				if fn := calleeFunc(x.pass, node); fn != nil && fn.Pkg() != nil &&
-					fn.Pkg().Path() == authPath && (fn.Name() == "Require" || fn.Name() == "RequireAny") {
+					(fn.Pkg().Path() == authPath && (fn.Name() == "Require" || fn.Name() == "RequireAny") ||
+						fn.Pkg().Path() == apiPath && fn.Name() == "Require") {
 					for _, arg := range node.Args {
 						if lit, s, ok := stringLit(arg); ok {
 							out = append(out, requiredPerm{perm: s, lit: lit})

@@ -3,6 +3,7 @@ package permcheck
 import (
 	"context"
 
+	"github.com/bronystylecrazy/ultrastack/contrib/api"
 	"github.com/bronystylecrazy/ultrastack/contrib/auth"
 	"github.com/bronystylecrazy/ultrastack/stack"
 )
@@ -36,6 +37,21 @@ func routeAssign() {
 	var rt stack.Route
 	rt.Require = "zones.remove" // want `^warning\[UV0002\]: permission "zones.remove" is required but no role in \[auth.roles\] grants it — add it to a role's grants in config.toml \[auth.roles\], or fix the requirement$`
 }
+
+// contrib/api route options: an api.Require string literal in a Get/Post/…
+// or Handle option list is a requirement at that call site; api.Public
+// requires nothing and policy: refs stay the boot check's job.
+func apiRoutes(r *api.Router) {
+	api.Get(r, "/speed", h, api.Require("speed.read"))                       // granted
+	api.Get(r, "/cams", h, api.Require("cameras.write"))                     // cameras.* covers it
+	api.Get(r, "/pub", h, api.Public())                                      // public: fine
+	api.Get(r, "/own", h, api.Require("policy:owner"))                       // policy ref: not our job
+	_ = api.Handle("zones.list", "GET /zones", h, api.Require("zones.read")) // granted
+	api.Post(r, "/audit", h, api.Require("audit.view"))                      // want `^warning\[UV0002\]: permission "audit.view" is required but no role in \[auth.roles\] grants it — add it to a role's grants in config.toml \[auth.roles\], or fix the requirement$`
+	api.Get(r, "/zones", h, api.Require("zones.wrte"))                       // want `^warning\[UV0002\]: permission "zones.wrte" is required but no role in \[auth.roles\] grants it — did you mean "zones.write"\? Otherwise grant it to a role in config.toml$`
+}
+
+func h(ctx context.Context, in struct{}) (struct{}, error) { return struct{}{}, nil }
 
 // Imperative auth.Require / auth.RequireAny with string literals.
 func imperative(ctx context.Context) {
