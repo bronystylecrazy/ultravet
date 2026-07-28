@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	github.com/bronystylecrazy/ultrastack v0.9.27
+	github.com/bronystylecrazy/ultrastack v0.9.28
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 )
