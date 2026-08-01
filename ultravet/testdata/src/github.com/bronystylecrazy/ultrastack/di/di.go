@@ -22,6 +22,7 @@ func Bind[I any](ctor any) Reg            { return Reg{} }
 func Module(name string, regs ...Reg) Reg { return Reg{} }
 func Pkg(regs ...Reg) Reg                 { return Reg{} }
 func Options(regs ...Reg) Reg             { return Reg{} }
+func Group(regs ...Reg) Reg               { return Reg{} }
 func Global(regs ...Reg) Reg              { return Reg{} }
 func Tolerate(regs ...Reg) Reg            { return Reg{} }
 func Export[T any]() Reg                  { return Reg{} }

@@ -33,8 +33,10 @@ func (x *extractor) summarizeExpr(e ast.Expr) *regSummary {
 		}
 		return &regSummary{Opaque: true}
 	case *ast.SelectorExpr:
-		// Another package's var: registration facts cover functions,
-		// not vars — opaque, never guess.
+		// Another package's module var: app.Modules, users.Module.
+		if s := x.summarizeImportedVar(e); s != nil {
+			return s
+		}
 		return &regSummary{Opaque: true}
 	default:
 		return &regSummary{Opaque: true}
@@ -42,25 +44,27 @@ func (x *extractor) summarizeExpr(e ast.Expr) *regSummary {
 }
 
 // summarizeVar resolves a registration held in a package-level var of
-// THIS package. Sound without whole-program analysis because every
-// possible writer is visible to the pass: the var resolves only when its
-// declaration carries an initializer and nothing in the package
-// reassigns it or takes its address. Any doubt returns nil (opaque).
+// THIS package — the canonical root form, cli.Run(App).
 func (x *extractor) summarizeVar(id *ast.Ident) *regSummary {
 	obj, ok := x.pass.TypesInfo.Uses[id].(*types.Var)
-	if !ok || obj.Pkg() != x.pass.Pkg {
-		return nil
-	}
 	// Package scope only: locals have dataflow we do not model.
-	if obj.Parent() != x.pass.Pkg.Scope() {
+	if !ok || obj.Pkg() != x.pass.Pkg || obj.Parent() != x.pass.Pkg.Scope() {
 		return nil
 	}
-	// The package-local writer scan below is sound only when no OTHER
-	// package can write the var: unexported, or any var in package main
-	// (importing package main is impossible — `var App` is this case).
-	if obj.Exported() && x.pass.Pkg.Name() != "main" {
-		return nil
-	}
+	return x.summarizeVarObj(obj)
+}
+
+// summarizeVarObj resolves a package-level registration var of THIS package:
+// only when its declaration carries an initializer and nothing in the package
+// reassigns it or takes its address. Any doubt returns nil (opaque).
+//
+// The writer scan sees every writer in this package, which settles unexported
+// vars and anything in package main outright. For an EXPORTED var in a library
+// package a foreign package could also write it, and no single pass can see
+// that — the guarantee there is UV0008, which flags such a write in the pass
+// over the WRITER (writeonce.go). That contract is what makes the v0.9.31 var
+// form as analyzable as the `func Use() di.Reg` it replaced.
+func (x *extractor) summarizeVarObj(obj *types.Var) *regSummary {
 	if s, done := x.varMemo[obj]; done {
 		return s
 	}
@@ -72,6 +76,27 @@ func (x *extractor) summarizeVar(id *ast.Ident) *regSummary {
 	s := x.summarizeExpr(init)
 	x.varMemo[obj] = s
 	return s
+}
+
+// summarizeImportedVar resolves pkg.Module through the declaring package's
+// regVarsFact. The fact carries only the vars that package proved write-once,
+// so one that is reassigned or addressed there is simply absent and stays
+// opaque here — the trust never has to be re-derived across the boundary.
+func (x *extractor) summarizeImportedVar(sel *ast.SelectorExpr) *regSummary {
+	obj, ok := x.pass.TypesInfo.Uses[sel.Sel].(*types.Var)
+	if !ok || obj.Pkg() == nil || obj.Pkg() == x.pass.Pkg ||
+		obj.Parent() != obj.Pkg().Scope() {
+		return nil
+	}
+	var fact regVarsFact
+	if !x.pass.ImportPackageFact(obj.Pkg(), &fact) {
+		return nil
+	}
+	s, ok := fact.Vars[obj.Name()]
+	if !ok {
+		return nil
+	}
+	return &s
 }
 
 // varInit finds the single initializer expression of a package-level var
@@ -292,7 +317,9 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 		for _, arg := range call.Args {
 			out.Scoped = append(out.Scoped, x.resultTypes(arg)...)
 		}
-	case "Options", "Global", "Tolerate":
+	case "Options", "Group", "Global", "Tolerate":
+		// Group IS Options (di/provide.go) — the spelling app.go uses for the
+		// feature list. Missing it made `var Modules = di.Group(...)` opaque.
 		// Tolerate wraps registrations that become NonCritical at runtime —
 		// but criticality is a boot-time (Start-hook) property the wiring
 		// checks do not model. For graph reconstruction its contents behave

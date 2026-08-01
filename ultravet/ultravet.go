@@ -37,9 +37,9 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names, UV0004 feature importing feature, UV0005 infra importing app, UV0006 util importing internal — before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names, UV0004 feature importing feature, UV0005 infra importing app, UV0006 util importing internal, UV0007 module name not the package name, UV0008 a module var written twice — before boot)",
 	Run:       run,
-	FactTypes: []analysis.Fact{new(regFuncsFact)},
+	FactTypes: []analysis.Fact{new(regFuncsFact), new(regVarsFact)},
 }
 
 const (
@@ -131,6 +131,27 @@ type regFuncsFact struct {
 	Funcs map[string]regSummary
 }
 
+// regVarsFact carries, per package, the summaries of that package's EXPORTED
+// package-level di.Reg vars that are write-once — how the v0.9.31 var form
+// (`var Module = di.Module(...)`, `var Modules = di.Group(...)`) crosses
+// packages. A var with a second writer or an escaped address never enters the
+// map, so an importer resolving through the fact inherits the guarantee
+// UV0008 enforces rather than re-deriving it.
+type regVarsFact struct {
+	Vars map[string]regSummary
+}
+
+func (*regVarsFact) AFact() {}
+
+func (f *regVarsFact) String() string {
+	names := make([]string, 0, len(f.Vars))
+	for n := range f.Vars {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return "regvars(" + strings.Join(names, ",") + ")"
+}
+
 func (*regFuncsFact) AFact() {}
 
 func (f *regFuncsFact) String() string {
@@ -169,7 +190,24 @@ func run(pass *analysis.Pass) (any, error) {
 		pass.ExportPackageFact(fact)
 	}
 
-	// 2. Find assembly roots and check each one.
+	// 2. Do the same for this package's exported, write-once registration
+	//    VARS — the taught wiring form. Only resolvable ones are exported;
+	//    an importer that finds nothing falls back to opaque.
+	vars := &regVarsFact{Vars: map[string]regSummary{}}
+	for _, name := range pass.Pkg.Scope().Names() {
+		obj, _ := pass.Pkg.Scope().Lookup(name).(*types.Var)
+		if obj == nil || !obj.Exported() || !isRegistrationType(obj.Type()) {
+			continue
+		}
+		if s := x.summarizeVarObj(obj); s != nil {
+			vars.Vars[name] = stripPositions(*s)
+		}
+	}
+	if len(vars.Vars) > 0 {
+		pass.ExportPackageFact(vars)
+	}
+
+	// 3. Find assembly roots and check each one.
 	for _, file := range pass.Files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
@@ -184,14 +222,17 @@ func run(pass *analysis.Pass) (any, error) {
 		})
 	}
 
-	// 3. UV0002: required permissions vs. the product's configured roles.
+	// 4. UV0002: required permissions vs. the product's configured roles.
 	x.checkPermissions()
 
-	// 4. UV0003: layer-prefixed file names — the closed-set doctrine.
+	// 5. UV0003: layer-prefixed file names — the closed-set doctrine.
 	checkFileNames(pass)
 
-	// 5. UV0004/UV0005/UV0006: the product tree's illegal import edges.
+	// 6. UV0004/UV0005/UV0006/UV0007: the product tree's laws.
 	checkDoctrine(pass)
+
+	// 7. UV0008: an exported module var is written once, at its declaration.
+	checkWriteOnce(pass)
 	return nil, nil
 }
 

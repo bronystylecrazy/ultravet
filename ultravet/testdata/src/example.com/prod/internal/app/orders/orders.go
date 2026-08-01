@@ -1,4 +1,4 @@
-// Package orders is a clean feature: infra and util only, no siblings.
+// Package orders is a clean feature: infra and util only, no siblings. // want package:`regvars\(Module\)`
 package orders
 
 import (
