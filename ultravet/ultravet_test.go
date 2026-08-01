@@ -26,6 +26,14 @@ func TestModuleVarResolution(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer, "modvar", "modvaruse")
 }
 
+// TestAliasSeam covers the sanctioned cross-feature seam: di.Alias[I, T]()
+// resolves as a provider of I needing T, so an app.go that uses it is checked
+// end to end (it used to go opaque) — without papering over a T nothing
+// provides.
+func TestAliasSeam(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer, "aliasfeat", "aliasapp")
+}
+
 // TestDoctrine runs the product-structure laws (UV0004 feature→feature,
 // UV0005 infra→app, UV0006 util→internal) over a doctrine-shaped tree:
 // example.com/prod is on the platform, example.com/foreign is not.

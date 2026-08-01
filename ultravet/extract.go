@@ -236,6 +236,33 @@ func (x *extractor) summarizeDICall(name string, call *ast.CallExpr) *regSummary
 				x.checkImplements(arg, iface)
 			}
 		}
+	case "Alias":
+		// di.Alias[I, T]() exposes the ALREADY-provided T as interface I — the
+		// sanctioned cross-feature seam (UV0004's escape), declared in app.go
+		// where the two features meet. The kernel builds it as
+		// Provide(func(v T) I { return any(v).(I) }) (di/wrap.go), so the graph
+		// models exactly that: one constructor providing I and needing T. A
+		// consumer of I resolves through to T's provider; a T nobody provides
+		// is still DI0001, at the alias.
+		//
+		// Both type parameters are inferable from nothing, so they are always
+		// written out — an *ast.IndexListExpr with two indices.
+		iface, okI := typeArgAt(x.pass, call, 0)
+		concrete, okT := typeArgAt(x.pass, call, 1)
+		if !okI || !okT {
+			out.Opaque = true
+			break
+		}
+		ctor := ctorInfo{
+			Name: fmt.Sprintf("di.Alias[%s, %s]",
+				shortType(typeString(iface)), shortType(typeString(concrete))),
+			Provides: []string{typeString(iface)},
+		}
+		ctor.Needs = []need{{
+			Type: typeString(concrete), By: ctor.Name, Kind: needHard,
+			Pos: call.Pos(), End: call.End(),
+		}}
+		out.Ctors = append(out.Ctors, ctor)
 	case "Supply":
 		for _, arg := range call.Args {
 			if t := x.pass.TypesInfo.TypeOf(arg); t != nil {
@@ -696,13 +723,22 @@ func exprFunc(pass *analysis.Pass, e ast.Expr) *types.Func {
 // typeArg extracts the first explicit type argument of a generic call
 // like di.Bind[OrderRepo](...).
 func typeArg(pass *analysis.Pass, call *ast.CallExpr) (types.Type, bool) {
+	return typeArgAt(pass, call, 0)
+}
+
+// typeArgAt extracts the i-th explicit type argument — di.Alias[I, T]() is
+// the two-parameter form, an *ast.IndexListExpr.
+func typeArgAt(pass *analysis.Pass, call *ast.CallExpr, i int) (types.Type, bool) {
 	switch f := ast.Unparen(call.Fun).(type) {
 	case *ast.IndexExpr:
+		if i != 0 {
+			return nil, false
+		}
 		t := pass.TypesInfo.TypeOf(f.Index)
 		return t, t != nil
 	case *ast.IndexListExpr:
-		if len(f.Indices) > 0 {
-			t := pass.TypesInfo.TypeOf(f.Indices[0])
+		if i < len(f.Indices) {
+			t := pass.TypesInfo.TypeOf(f.Indices[i])
 			return t, t != nil
 		}
 	}

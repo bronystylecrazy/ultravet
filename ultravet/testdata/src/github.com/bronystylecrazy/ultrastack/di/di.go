@@ -19,6 +19,7 @@ func Provide(ctors ...any) Reg            { return Reg{} }
 func Default(regs ...Reg) Reg             { return Reg{} }
 func Supply(values ...any) Reg            { return Reg{} }
 func Bind[I any](ctor any) Reg            { return Reg{} }
+func Alias[I, T any]() Reg                { return Reg{} }
 func Module(name string, regs ...Reg) Reg { return Reg{} }
 func Pkg(regs ...Reg) Reg                 { return Reg{} }
 func Options(regs ...Reg) Reg             { return Reg{} }
