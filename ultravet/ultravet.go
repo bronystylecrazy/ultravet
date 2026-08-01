@@ -201,6 +201,13 @@ func run(pass *analysis.Pass) (any, error) {
 // plain-noun files; a file that outgrows a page splits the PACKAGE.
 var layerPrefixed = regexp.MustCompile(`^(handler|service)_.+\.go$`)
 
+// handlerFib is the ONE sanctioned exception: a feature's fiber-native
+// handlers, quarantined in the file whose name is the fleet-greppable marker
+// that this product is pinned to one HTTP engine. It is not layering — it is a
+// transport boundary, and keeping it in a known file is what makes
+// `grep -rl handler_fib.go` answer "which features cannot swap servers".
+const handlerFib = "handler_fib.go"
+
 // checkFileNames emits UV0003 for layer-prefixed file names — only in
 // packages on the platform (importing ultrastack), so foreign code in the
 // same build is never policed.
@@ -218,7 +225,7 @@ func checkFileNames(pass *analysis.Pass) {
 	for _, file := range pass.Files {
 		pos := pass.Fset.Position(file.Pos())
 		base := filepath.Base(pos.Filename)
-		if !layerPrefixed.MatchString(base) {
+		if !layerPrefixed.MatchString(base) || base == handlerFib {
 			continue
 		}
 		pass.Reportf(file.Pos(),
