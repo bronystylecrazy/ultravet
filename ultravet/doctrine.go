@@ -21,7 +21,10 @@ package ultravet
 // build is never policed.
 
 import (
+	"go/ast"
+	"go/token"
 	"go/types"
+	"strconv"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -53,6 +56,9 @@ func checkDoctrine(pass *analysis.Pass) {
 	// together is its whole job.
 	if segs[0] == "app" && len(segs) == 1 {
 		return
+	}
+	if segs[0] == "app" && len(segs) == 2 {
+		checkModuleName(pass)
 	}
 
 	for _, file := range pass.Files {
@@ -102,6 +108,42 @@ func checkDoctrine(pass *analysis.Pass) {
 				})
 			}
 		}
+	}
+}
+
+// checkModuleName emits UV0007 for a feature whose di.Module name is not its
+// package name. Only feature packages are checked: a preset naming its module
+// for the path it owns ("contrib/fib") is deliberate. The explicit name is the
+// taught form precisely because it reads at the call — the price is that a
+// rename can leave it behind, and this is that price, paid statically.
+func checkModuleName(pass *analysis.Pass) {
+	want := pass.Pkg.Name()
+	for _, file := range pass.Files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			fn := calleeFunc(pass, call)
+			if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != diPath || fn.Name() != "Module" {
+				return true
+			}
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			got, err := strconv.Unquote(lit.Value)
+			if err != nil || got == want {
+				return true
+			}
+			pass.Report(analysis.Diagnostic{
+				Pos: lit.Pos(), End: lit.End(),
+				Message: "warning[UV0007]: module name " + strconv.Quote(got) + " is not the package name " +
+					strconv.Quote(want) + " — the name is what every diagnostic, ./app graph and Explain call this slice of the graph, so a disagreement sends every reader to a directory that does not exist. Write di.Module(" +
+					strconv.Quote(want) + ", ...), or di.Pkg(...) to self-name and have no string to drift",
+			})
+			return true
+		})
 	}
 }
 
