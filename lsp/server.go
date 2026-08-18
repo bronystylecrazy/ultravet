@@ -272,8 +272,11 @@ func toLSP(fset *token.FileSet, d analysis.Diagnostic) (uri string, out lspDiagn
 	// annotation use.
 	severity, code, msg := ultravet.SplitHead(d.Message)
 	sev := 1
-	if severity == "warning" {
+	switch severity {
+	case "warning":
 		sev = 2
+	case "note":
+		sev = 3 // LSP Information
 	}
 	out = lspDiagnostic{
 		Range:    lspRange{Start: toPos(pos), End: toPos(end)},

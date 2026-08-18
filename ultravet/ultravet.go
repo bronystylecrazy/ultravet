@@ -37,7 +37,7 @@ import (
 
 var Analyzer = &analysis.Analyzer{
 	Name:      "ultravet",
-	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names, UV0004 feature importing feature, UV0005 infra importing app, UV0006 util importing internal, UV0007 module name not the package name, UV0008 a module var written twice — before boot)",
+	Doc:       "static wiring checks for ultrastack dependency graphs (DI0001 missing providers, DI0004 ambiguity, DI0003 cycles, DI0005 module privacy, DI0007 bad binds, DI0010 bad constructors, DI0101 captive scoped deps, DI0106 family members outside; UV0001 constructors that dial, UV0002 required permissions no configured role grants, UV0003 layer-prefixed file names, UV0005 infra importing app, UV0006 util importing internal, UV0007 module name not the package name, UV0008 a module var written twice, UV0009 feature package overgrown, UV0010 the feature dependency surface and the kind leaf, UV0011 inline scope literals — before boot)",
 	Run:       run,
 	FactTypes: []analysis.Fact{new(regFuncsFact), new(regVarsFact)},
 }
@@ -228,11 +228,17 @@ func run(pass *analysis.Pass) (any, error) {
 	// 5. UV0003: layer-prefixed file names — the closed-set doctrine.
 	checkFileNames(pass)
 
-	// 6. UV0004/UV0005/UV0006/UV0007: the product tree's laws.
+	// 6. UV0005/UV0006/UV0007/UV0010: the product tree's laws.
 	checkDoctrine(pass)
 
 	// 7. UV0008: an exported module var is written once, at its declaration.
 	checkWriteOnce(pass)
+
+	// 8. UV0009: the growth law — a feature package past its budget.
+	checkGrowth(pass)
+
+	// 9. UV0011: scopes are constants on the contract page, never literals.
+	checkScopeLiterals(pass)
 	return nil, nil
 }
 

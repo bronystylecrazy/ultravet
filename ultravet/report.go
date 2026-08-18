@@ -44,7 +44,7 @@ import (
 // `ultravet -fix` would rewrite this finding.
 type Finding struct {
 	Code      string      `json:"code"`     // "DI0001", "UV0003"; "" when the message has no bracketed code
-	Severity  string      `json:"severity"` // "error" or "warning"
+	Severity  string      `json:"severity"` // "error", "warning", or "note" (informational — never gates)
 	Message   string      `json:"message"`  // the full one-line message, code prefix included
 	File      string      `json:"file"`     // absolute path
 	Line      int         `json:"line"`     // 1-based
@@ -214,8 +214,11 @@ func MarshalFindings(findings []Finding) []byte {
 func WriteGitHubAnnotations(w io.Writer, findings []Finding, root string) {
 	for _, f := range findings {
 		level := "error"
-		if f.Severity == "warning" {
+		switch f.Severity {
+		case "warning":
 			level = "warning"
+		case "note":
+			level = "notice"
 		}
 		props := []string{
 			"file=" + ghProperty(relativeTo(root, f.File)),

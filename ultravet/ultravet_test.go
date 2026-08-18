@@ -34,9 +34,10 @@ func TestAliasSeam(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer, "aliasfeat", "aliasapp")
 }
 
-// TestDoctrine runs the product-structure laws (UV0004 feature→feature,
-// UV0005 infra→app, UV0006 util→internal) over a doctrine-shaped tree:
-// example.com/prod is on the platform, example.com/foreign is not.
+// TestDoctrine runs the product-structure laws (the UV0010 sibling notes and
+// kind leaf rules, UV0005 infra→app, UV0006 util→internal) over a
+// doctrine-shaped tree: example.com/prod is on the platform,
+// example.com/foreign is not.
 func TestDoctrine(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer,
 		"example.com/prod/internal/app",
@@ -45,8 +46,21 @@ func TestDoctrine(t *testing.T) {
 		"example.com/prod/internal/app/orders",
 		"example.com/prod/internal/db",
 		"example.com/prod/internal/blob",
+		"example.com/prod/internal/kind",
 		"example.com/prod/internal/util",
 		"example.com/foreign/internal/app/a",
 		"example.com/foreign/internal/app/b",
+	)
+}
+
+// TestGrowthAndScopes runs the v3 growth law (UV0009: the file budget, the
+// second route prefix, the one-level nesting cap) and the scope-literal law
+// (UV0011) over feature-shaped fixtures.
+func TestGrowthAndScopes(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer,
+		"example.com/prod/internal/app/grown",
+		"example.com/prod/internal/app/scopes",
+		"example.com/prod/internal/app/bloated",
+		"example.com/prod/internal/app/deep/one/two",
 	)
 }

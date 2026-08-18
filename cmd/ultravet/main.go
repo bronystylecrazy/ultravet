@@ -170,7 +170,7 @@ func collect(graph *checker.Graph) []ultravet.Finding {
 }
 
 // reportJSON prints the structured finding document. Exit codes match every
-// other format: 1 with findings, 0 clean, 2 on a load error.
+// other format: 1 with gating findings, 0 clean, 2 on a load error.
 func reportJSON(patterns []string) int {
 	graph, code := load(patterns)
 	if graph == nil {
@@ -178,7 +178,7 @@ func reportJSON(patterns []string) int {
 	}
 	findings := collect(graph)
 	os.Stdout.Write(ultravet.MarshalFindings(findings))
-	return exitFor(len(findings))
+	return exitFor(gating(findings))
 }
 
 // reportGitHub prints GitHub Actions workflow commands — one annotation per
@@ -190,7 +190,7 @@ func reportGitHub(patterns []string) int {
 	}
 	findings := collect(graph)
 	ultravet.WriteGitHubAnnotations(os.Stdout, findings, workspaceRoot())
-	return exitFor(len(findings))
+	return exitFor(gating(findings))
 }
 
 func exitFor(findings int) int {
@@ -198,6 +198,18 @@ func exitFor(findings int) int {
 		return 1
 	}
 	return 0
+}
+
+// gating counts the findings that fail the run. Notes (the informational
+// tier — a feature's sibling-dependency listing) print but never gate.
+func gating(findings []ultravet.Finding) int {
+	n := 0
+	for _, f := range findings {
+		if f.Severity != "note" {
+			n++
+		}
+	}
+	return n
 }
 
 // workspaceRoot is what GitHub resolves annotation paths against: the checkout
@@ -228,6 +240,7 @@ func pretty(patterns []string, fix bool) int {
 		key     string
 		text    string
 		fixable bool
+		note    bool
 	}
 	var findings []finding
 	color := isTTY() && os.Getenv("NO_COLOR") == ""
@@ -242,11 +255,13 @@ func pretty(patterns []string, fix bool) int {
 				continue
 			}
 			seen[key] = true
+			sev, _, _ := ultravet.SplitHead(d.Message)
 			f := finding{
 				pos:     act.Package.Fset.Position(d.Pos).String(),
 				key:     key,
 				text:    ultravet.RenderDiagnostic(act.Package.Fset, d, color),
 				fixable: ultravet.Fixable(d),
+				note:    sev == "note",
 			}
 			if f.fixable {
 				fixable++
@@ -270,7 +285,7 @@ func pretty(patterns []string, fix bool) int {
 	}
 
 	sort.Slice(findings, func(i, j int) bool { return findings[i].pos < findings[j].pos })
-	printed := 0
+	printed, notes := 0, 0
 	for _, f := range findings {
 		if rep.fixed[f.key] {
 			continue // repaired on disk; reporting it again would be noise
@@ -280,17 +295,37 @@ func pretty(patterns []string, fix bool) int {
 		}
 		fmt.Print(f.text)
 		printed++
+		if f.note {
+			notes++
+		}
 	}
 	if printed > 0 {
 		fmt.Println()
 	}
+	// Notes are informational — they print, they never gate the run.
+	gates := printed - notes
 	if fix {
 		fmt.Printf("ultravet: fixed %s in %s; %s remaining\n",
 			plural(len(rep.fixed), "issue"), plural(rep.files, "file"),
-			plural(printed, "finding"))
-		return 1
+			plural(gates, "finding"))
+		// -fix changes the files, not the verdict: a source that had gating
+		// findings still exits 1 even when every one was repaired.
+		total := 0
+		for _, f := range findings {
+			if !f.note {
+				total++
+			}
+		}
+		return exitFor(total)
 	}
-	fmt.Printf("ultravet: %s", plural(printed, "finding"))
+	if gates == 0 {
+		fmt.Printf("ultravet: %s (informational — nothing gates)\n", plural(notes, "note"))
+		return 0
+	}
+	fmt.Printf("ultravet: %s", plural(gates, "finding"))
+	if notes > 0 {
+		fmt.Printf(", %s", plural(notes, "note"))
+	}
 	if fixable > 0 {
 		fmt.Printf(" (%d fixable — re-run with -fix to apply)", fixable)
 	}

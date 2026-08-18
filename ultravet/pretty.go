@@ -37,7 +37,7 @@ const (
 	cDim    = "\x1b[2m"
 )
 
-var headRe = regexp.MustCompile(`^(error|warning)\[([A-Z]+[0-9]+)\]: (.*)$`)
+var headRe = regexp.MustCompile(`^(error|warning|note)\[([A-Z]+[0-9]+)\]: (.*)$`)
 
 // RenderDiagnostic renders one diagnostic rustc-style. color toggles ANSI.
 func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) string {
@@ -56,8 +56,11 @@ func RenderDiagnostic(fset *token.FileSet, d analysis.Diagnostic, color bool) st
 	}
 
 	sevColor := cRed
-	if sev == "warning" {
+	switch sev {
+	case "warning":
 		sevColor = cYellow
+	case "note":
+		sevColor = cBlue
 	}
 
 	var b strings.Builder
