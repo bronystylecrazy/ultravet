@@ -46,8 +46,8 @@ const (
 	internalSeg    = "/internal/"
 )
 
-// checkDoctrine emits UV0004/UV0005/UV0006 for the illegal edges of the
-// product tree.
+// checkDoctrine emits UV0005/UV0006/UV0010 for the illegal edges of the
+// product tree, and the note[UV0010] sibling-dependency listing.
 func checkDoctrine(pass *analysis.Pass) {
 	// External test packages carry a "_test" path suffix; without stripping
 	// it, users_test importing users would read as a cross-feature edge. The
