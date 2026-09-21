@@ -2,7 +2,7 @@
 // written once, at its declaration, and its address is never taken.
 package writeonce
 
-import "github.com/bronystylecrazy/ultrastack/di"
+import "github.com/bronystylecrazy/di"
 
 type Svc struct{}
 

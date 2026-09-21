@@ -2,7 +2,7 @@
 package orders
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 
 	"example.com/prod/internal/db"
 	"example.com/prod/internal/util"

@@ -3,7 +3,7 @@ package presetuse
 import (
 	"presetlib"
 
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 	"github.com/bronystylecrazy/ultrastack/stack"
 )
 

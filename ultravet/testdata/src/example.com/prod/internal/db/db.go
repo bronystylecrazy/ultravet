@@ -1,7 +1,7 @@
 // Package db is clean infra: it knows nothing about the product above it.
 package db
 
-import "github.com/bronystylecrazy/ultrastack/di"
+import "github.com/bronystylecrazy/di"
 
 type DB struct{}
 

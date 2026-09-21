@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/bronystylecrazy/ultrastack v0.9.42
+	github.com/bronystylecrazy/di v0.1.0
 	golang.org/x/tools v0.47.0
 )
 

@@ -32,7 +32,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 
-	"github.com/bronystylecrazy/ultrastack/di/graphcheck"
+	"github.com/bronystylecrazy/di/graphcheck"
 )
 
 var Analyzer = &analysis.Analyzer{
@@ -43,7 +43,7 @@ var Analyzer = &analysis.Analyzer{
 }
 
 const (
-	diPath    = "github.com/bronystylecrazy/ultrastack/di"
+	diPath    = "github.com/bronystylecrazy/di"
 	stackPath = "github.com/bronystylecrazy/ultrastack/stack"
 	cliPath   = "github.com/bronystylecrazy/ultrastack/cli"
 )
@@ -256,12 +256,12 @@ var layerPrefixed = regexp.MustCompile(`^(handler|service)_.+\.go$`)
 const handlerFib = "handler_fib.go"
 
 // checkFileNames emits UV0003 for layer-prefixed file names — only in
-// packages on the platform (importing ultrastack), so foreign code in the
-// same build is never policed.
+// packages on the platform (importing the framework or the kernel), so
+// foreign code in the same build is never policed.
 func checkFileNames(pass *analysis.Pass) {
 	onPlatform := false
 	for _, imp := range pass.Pkg.Imports() {
-		if strings.HasPrefix(imp.Path(), ultrastackPath) {
+		if onPlatformPath(imp.Path()) {
 			onPlatform = true
 			break
 		}

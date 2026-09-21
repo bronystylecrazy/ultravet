@@ -3,7 +3,7 @@ package vocab
 import (
 	"log/slog"
 
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 	"github.com/bronystylecrazy/ultrastack/stack"
 )
 

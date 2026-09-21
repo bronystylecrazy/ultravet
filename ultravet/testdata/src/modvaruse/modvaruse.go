@@ -7,7 +7,7 @@
 package modvaruse
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 
 	"modvar"
 )

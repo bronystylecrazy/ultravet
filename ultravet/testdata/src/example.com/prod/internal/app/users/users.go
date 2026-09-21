@@ -4,7 +4,7 @@
 package users
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 
 	"example.com/prod/internal/app/orders" // want `note\[UV0010\]: feature users depends on sibling feature orders`
 	"example.com/prod/internal/app/users/inner"

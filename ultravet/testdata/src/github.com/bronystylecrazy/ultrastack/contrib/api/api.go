@@ -5,7 +5,7 @@ package api
 import (
 	"context"
 
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 )
 
 type Operation struct {

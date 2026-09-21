@@ -1,7 +1,7 @@
 package cycle
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 	"github.com/bronystylecrazy/ultrastack/stack"
 )
 

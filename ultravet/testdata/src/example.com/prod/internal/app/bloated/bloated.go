@@ -2,6 +2,6 @@
 // growth law says a child package. Test files never count.
 package bloated // want `warning\[UV0009\]: feature bloated holds 9 non-test files`
 
-import "github.com/bronystylecrazy/ultrastack/di"
+import "github.com/bronystylecrazy/di"
 
 var _ = di.Provide

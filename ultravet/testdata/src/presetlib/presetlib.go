@@ -2,7 +2,7 @@
 // once and its effect crosses packages as a fact.
 package presetlib
 
-import "github.com/bronystylecrazy/ultrastack/di"
+import "github.com/bronystylecrazy/di"
 
 type Pool struct{}
 

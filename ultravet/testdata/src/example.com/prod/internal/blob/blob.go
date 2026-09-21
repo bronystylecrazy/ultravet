@@ -2,7 +2,7 @@
 package blob
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 
 	"example.com/prod/internal/app/orders" // want `warning\[UV0005\]: infra package blob imports internal/app/orders — infra sits BELOW the product`
 	"example.com/prod/internal/db"

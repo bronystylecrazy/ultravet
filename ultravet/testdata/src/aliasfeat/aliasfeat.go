@@ -5,7 +5,7 @@
 // the two meet: app.go, with di.Alias.
 package aliasfeat
 
-import "github.com/bronystylecrazy/ultrastack/di"
+import "github.com/bronystylecrazy/di"
 
 type Config struct{ Dir string }
 

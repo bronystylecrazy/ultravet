@@ -4,7 +4,7 @@
 package app
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 
 	"example.com/prod/internal/app/orders"
 	"example.com/prod/internal/app/users"

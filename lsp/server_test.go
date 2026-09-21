@@ -78,7 +78,7 @@ func writeMain(t *testing.T, dir string) {
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte(`package main
 
 import (
-	"github.com/bronystylecrazy/ultrastack/di"
+	"github.com/bronystylecrazy/di"
 	"github.com/bronystylecrazy/ultrastack/stack"
 )
 

@@ -4,7 +4,7 @@
 // of UV0008, and the side an importer is allowed to resolve through.
 package modvar
 
-import "github.com/bronystylecrazy/ultrastack/di"
+import "github.com/bronystylecrazy/di"
 
 type Config struct{ DSN string }
 

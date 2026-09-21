@@ -241,6 +241,13 @@ func splitInternal(pkgPath string) (module, rest string, ok bool) {
 // a product with no platform edge anywhere below it (a util/ importing a
 // pure-Go internal package that imports nothing) is left alone. That is the
 // right trade — a lint that fires on someone else's tree is unusable.
+// onPlatformPath: the platform is two modules since the kernel split, and a
+// feature that only takes a di.Reg — never touching stack, cli or a preset —
+// is still a product package the doctrine applies to.
+func onPlatformPath(p string) bool {
+	return strings.HasPrefix(p, ultrastackPath) || p == diPath || strings.HasPrefix(p, diPath+"/")
+}
+
 func onPlatform(pkg *types.Package) bool {
 	seen := map[*types.Package]bool{}
 	var walk func(p *types.Package) bool
@@ -250,7 +257,7 @@ func onPlatform(pkg *types.Package) bool {
 		}
 		seen[p] = true
 		for _, imp := range p.Imports() {
-			if strings.HasPrefix(imp.Path(), ultrastackPath) || walk(imp) {
+			if onPlatformPath(imp.Path()) || walk(imp) {
 				return true
 			}
 		}
