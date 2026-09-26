@@ -7,7 +7,7 @@ save, with clickable "declared here" related spans.
 
 ## Install
 
-    GOPRIVATE=github.com/bronystylecrazy/* go install github.com/bronystylecrazy/ultrastack/analyzer/cmd/ultravet-lsp@latest
+    go install github.com/bronystylecrazy/ultravet/cmd/ultravet-lsp@latest
     code --install-extension ultravet-0.1.0.vsix
 
 The extension finds `ultravet-lsp` on PATH; override with the
