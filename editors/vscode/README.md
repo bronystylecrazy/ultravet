@@ -12,3 +12,9 @@ save, with clickable "declared here" related spans.
 
 The extension finds `ultravet-lsp` on PATH; override with the
 `ultravet.serverPath` setting.
+
+## Build
+
+    bun install
+    bun run build
+    bunx @vscode/vsce package
