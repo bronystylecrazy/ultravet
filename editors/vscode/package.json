@@ -1,0 +1,32 @@
+{
+  "name": "ultravet",
+  "displayName": "ultravet — ultrastack wiring diagnostics",
+  "description": "DI wiring errors at keystroke time: missing providers, cycles, captive scoped deps — with quick-fixes. Runs beside gopls.",
+  "version": "0.1.0",
+  "publisher": "bronystylecrazy",
+  "license": "UNLICENSED",
+  "repository": { "type": "git", "url": "https://github.com/bronystylecrazy/ultrastack" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Linters", "Programming Languages"],
+  "activationEvents": ["onLanguage:go"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "ultravet",
+      "properties": {
+        "ultravet.serverPath": {
+          "type": "string",
+          "default": "ultravet-lsp",
+          "description": "Path to the ultravet-lsp binary (default: found on PATH)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "vscode-languageclient": "^9.0.1"
+  }
+}
