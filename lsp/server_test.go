@@ -57,14 +57,13 @@ func (c *client) recv() rpcMessage {
 	return msg
 }
 
-// brokenModule writes a product with a missing provider, replaced onto the
-// local framework checkout.
+// brokenModule writes a product with a missing provider. It needs only the
+// kernel: di.New is an assembly root like stack.Run.
 func brokenModule(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	root, _ := filepath.Abs("../..")
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(fmt.Sprintf(
-		"module lspdemo\n\ngo 1.26\n\nrequire github.com/bronystylecrazy/ultrastack v0.0.0\n\nreplace github.com/bronystylecrazy/ultrastack => %s\n", root)), 0o644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(
+		"module lspdemo\n\ngo 1.27.0\n\nrequire github.com/bronystylecrazy/di v0.1.0\n"), 0o644)
 	writeMain(t, dir)
 	tidy := exec.Command("go", "mod", "tidy")
 	tidy.Dir = dir
@@ -79,7 +78,6 @@ func writeMain(t *testing.T, dir string) {
 
 import (
 	"github.com/bronystylecrazy/di"
-	"github.com/bronystylecrazy/ultrastack/stack"
 )
 
 type Config struct{}
@@ -89,7 +87,7 @@ func NewConfig() *Config           { return &Config{} }
 func NewServer(cfg *Config) *Server { return &Server{} }
 
 func main() {
-	stack.Run(
+	di.New(
 		di.Provide(NewServer),
 	)
 }
@@ -152,20 +150,20 @@ func TestLSPConversation(t *testing.T) {
 		t.Fatalf("diagnostic: %+v", d)
 	}
 	// The related span is the parameter that created the need — the
-	// `cfg *Config` in NewServer's signature on 0-based line 11, chars
+	// `cfg *Config` in NewServer's signature on 0-based line 10, chars
 	// 15..26 — not the function name.
 	if len(d.Related) != 1 || !strings.Contains(d.Related[0].Message, "this parameter of NewServer") {
 		t.Fatalf("related span missing: %+v", d.Related)
 	}
-	if r := d.Related[0].Location.Range; r.Start.Line != 11 || r.Start.Character != 15 ||
-		r.End.Line != 11 || r.End.Character != 26 {
+	if r := d.Related[0].Location.Range; r.Start.Line != 10 || r.Start.Character != 15 ||
+		r.End.Line != 10 || r.End.Character != 26 {
 		t.Fatalf("related range: %+v", r)
 	}
 	// The range is the argument at fault — the NewServer inside
-	// di.Provide(NewServer) on 0-based line 15, chars 13..22 — not the
-	// whole stack.Run( line.
-	if d.Range.Start.Line != 15 || d.Range.Start.Character != 13 ||
-		d.Range.End.Line != 15 || d.Range.End.Character != 22 {
+	// di.Provide(NewServer) on 0-based line 14, chars 13..22 — not the
+	// whole di.New( line.
+	if d.Range.Start.Line != 14 || d.Range.Start.Character != 13 ||
+		d.Range.End.Line != 14 || d.Range.End.Character != 22 {
 		t.Fatalf("range: %+v", d.Range)
 	}
 
@@ -192,8 +190,8 @@ func TestLSPConversation(t *testing.T) {
 	if len(a.Diagnostics) != 1 || a.Diagnostics[0].Code != "DI0001" {
 		t.Errorf("the action must name the diagnostic it fixes: %+v", a.Diagnostics)
 	}
-	// The golden edit: an insertion just inside stack.Run( (0-based line 14,
-	// char 11), adding the registration line at the argument list's own
+	// The golden edit: an insertion just inside di.New( (0-based line 13,
+	// char 8), adding the registration line at the argument list's own
 	// indentation. Byte-for-byte what the fix carries — the LSP transports it,
 	// it does not re-derive it.
 	edits, ok := a.Edit.Changes[mainURI]
@@ -201,7 +199,7 @@ func TestLSPConversation(t *testing.T) {
 		t.Fatalf("the edit must target exactly the diagnostic's file: %+v", a.Edit.Changes)
 	}
 	want := []textEdit{{
-		Range:   lspRange{Start: position{Line: 14, Character: 11}, End: position{Line: 14, Character: 11}},
+		Range:   lspRange{Start: position{Line: 13, Character: 8}, End: position{Line: 13, Character: 8}},
 		NewText: "\n\t\tdi.Provide(NewConfig),",
 	}}
 	if !reflect.DeepEqual(edits, want) {

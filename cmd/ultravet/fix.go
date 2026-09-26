@@ -24,7 +24,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/checker"
 
-	"github.com/bronystylecrazy/ultrastack/analyzer/ultravet"
+	"github.com/bronystylecrazy/ultravet"
 )
 
 // fileEdit is one analysis.TextEdit resolved to byte offsets in a named file.

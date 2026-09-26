@@ -18,7 +18,7 @@ func fixtureVet(t *testing.T) (run func(env []string, args ...string) (stdout, s
 	if testing.Short() {
 		t.Skip("builds and runs the analyzer binary")
 	}
-	gopath, err := filepath.Abs(filepath.Join("..", "..", "ultravet", "testdata"))
+	gopath, err := filepath.Abs(filepath.Join("..", "..", "testdata"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestFixRewritesFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the analyzer binary")
 	}
-	src, err := filepath.Abs(filepath.Join("..", "..", "ultravet", "testdata"))
+	src, err := filepath.Abs(filepath.Join("..", "..", "testdata"))
 	if err != nil {
 		t.Fatal(err)
 	}

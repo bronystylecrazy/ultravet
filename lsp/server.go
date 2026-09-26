@@ -30,7 +30,7 @@ import (
 	"golang.org/x/tools/go/analysis/checker"
 	"golang.org/x/tools/go/packages"
 
-	"github.com/bronystylecrazy/ultrastack/analyzer/ultravet"
+	"github.com/bronystylecrazy/ultravet"
 )
 
 // Server speaks LSP over one connection (stdio in production, pipes in
@@ -267,7 +267,7 @@ func toLSP(fset *token.FileSet, d analysis.Diagnostic) (uri string, out lspDiagn
 	if d.End.IsValid() {
 		end = fset.Position(d.End)
 	}
-	// One head parser for the whole framework (analyzer/ultravet): the
+	// One head parser for the whole framework (this module): the
 	// severity the editor paints is the severity the report and the CI
 	// annotation use.
 	severity, code, msg := ultravet.SplitHead(d.Message)

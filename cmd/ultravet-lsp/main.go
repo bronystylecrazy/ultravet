@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/bronystylecrazy/ultrastack/analyzer/lsp"
+	"github.com/bronystylecrazy/ultravet/lsp"
 )
 
 func main() {

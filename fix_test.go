@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/tools/go/analysis/analysistest"
 
-	"github.com/bronystylecrazy/ultrastack/analyzer/ultravet"
+	"github.com/bronystylecrazy/ultravet"
 )
 
 // TestSuggestedFixes verifies every machine-safe fix against a .golden file:

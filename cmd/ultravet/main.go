@@ -28,11 +28,11 @@ import (
 	"golang.org/x/tools/go/analysis/singlechecker"
 	"golang.org/x/tools/go/packages"
 
-	"github.com/bronystylecrazy/ultrastack/analyzer/ultravet"
+	"github.com/bronystylecrazy/ultravet"
 )
 
 // output formats. human is the rustc-style report; json and github are the
-// machine serializations, both marshaled by analyzer/ultravet's one Finding
+// machine serializations, both marshaled by this module's one Finding
 // mapping so they cannot drift from each other or from the mcp tool.
 const (
 	formatHuman  = "human"
