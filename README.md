@@ -25,6 +25,7 @@ go vet -vettool=$(which ultravet) ./...
 | `cmd/ultravet` | the CLI and vet tool: `-fix`, `-format json\|github` (github is automatic in Actions) |
 | `cmd/ultravet-lsp` | the language server, beside gopls — diagnostics on open and save, "Register NewX" quick-fixes |
 | `lsp` | the server itself |
+| `editors/vscode` | the VS Code extension wrapping `ultravet-lsp` |
 
 It also knows [ultrastack](https://github.com/bronystylecrazy/ultrastack)'s
 assembly roots and presets, and runs its doctrine checks (`UVxxxx`) on
