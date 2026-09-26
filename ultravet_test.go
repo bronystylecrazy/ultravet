@@ -64,3 +64,10 @@ func TestGrowthAndScopes(t *testing.T) {
 		"example.com/prod/internal/app/deep/one/two",
 	)
 }
+
+// TestSpanContext runs UV0012: a context used after a stack span was opened
+// from it — and the forms that are not stale (discarded span, rebound ctx,
+// closures before, out of scope, foreign Span methods).
+func TestSpanContext(t *testing.T) {
+	analysistest.Run(t, analysistest.TestData(), ultravet.Analyzer, "spanctx")
+}
