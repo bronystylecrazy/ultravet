@@ -29,7 +29,9 @@ func fixtureVet(t *testing.T) (run func(env []string, args ...string) (stdout, s
 	return func(env []string, args ...string) (string, string, int) {
 		t.Helper()
 		cmd := exec.Command(bin, args...)
-		cmd.Env = append(append(os.Environ(), "GOPATH="+gopath, "GO111MODULE=off"), env...)
+		// GITHUB_ACTIONS is cleared so the human format is the default even
+		// when these tests run in Actions; a test that wants it passes it.
+		cmd.Env = append(append(os.Environ(), "GOPATH="+gopath, "GO111MODULE=off", "GITHUB_ACTIONS="), env...)
 		var out, errW bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errW
 		code := 0
@@ -268,7 +270,7 @@ func TestFixRewritesFiles(t *testing.T) {
 	run := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command(bin, args...)
-		cmd.Env = append(os.Environ(), "GOPATH="+gopath, "GO111MODULE=off")
+		cmd.Env = append(os.Environ(), "GOPATH="+gopath, "GO111MODULE=off", "GITHUB_ACTIONS=")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		if err := cmd.Run(); err != nil {
